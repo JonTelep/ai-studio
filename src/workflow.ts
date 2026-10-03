@@ -15,6 +15,7 @@ import { requireAsset, resolveAssetsDir } from './pipeline/paths.js';
 import { assertReadable, probeFrameSize } from './pipeline/probe.js';
 import { renderProject } from './pipeline/render.js';
 import { planShotMedia } from './pipeline/shot-media.js';
+import { resolveShotId } from './pipeline/shot-list.js';
 import { assertStillsReady } from './pipeline/stills.js';
 
 const IMAGES_README = `# images
@@ -298,8 +299,9 @@ export async function redoShot(
   requested?: 'image' | 'video',
 ): Promise<void> {
   const project = validateProject(projectPath);
-  const stage = chooseRedoStage(project, shotId, requested);
-  console.log(`Redo ${shotId} ${stage}.`);
+  const resolved = resolveShotId(project.shots, shotId);
+  const stage = chooseRedoStage(project, resolved, requested);
+  console.log(`Redo ${resolved} ${stage}.`);
   await generateProject({
     projectPath,
     yes: false,
@@ -308,7 +310,7 @@ export async function redoShot(
     whisper: false,
     analyzer: 'energy',
     scope: stage === 'image' ? 'images' : 'videos',
-    onlyShot: shotId,
+    onlyShot: resolved,
     freshImages: stage === 'image',
     freshVideos: stage === 'video',
   });

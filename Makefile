@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-COMMANDS := help new script dry images prod redo takes pick render open
+COMMANDS := help new script dry images prod shots list redo takes pick render open
 EXTRA_GOALS := $(filter-out $(COMMANDS),$(MAKECMDGOALS))
 
 ifeq ($(origin name),command line)
@@ -17,7 +17,7 @@ endif
 PROJECT := projects/$(project_name)/project.yaml
 renderer ?= ffmpeg
 
-.PHONY: help require-name require-shot new script dry images prod redo takes pick render open $(EXTRA_GOALS)
+.PHONY: help require-name require-shot new script dry images prod shots list redo takes pick render open $(EXTRA_GOALS)
 
 $(foreach extra,$(EXTRA_GOALS),$(if $(shell printf '%s' '$(extra)' | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$$' && echo ok),$(eval $(extra):;@:),$(error Project name "$(extra)" must use letters, numbers, dashes, or underscores)))
 
@@ -30,14 +30,16 @@ help:
 	@echo "  make images <name>                      Generate stills only, then a contact sheet"
 	@echo "  make prod <name>                        Generate video, voice, and sound, then render"
 	@echo ""
-	@echo "  make redo <name> shot=<id>              Redo that shot (image if no video yet, else video)"
-	@echo "  make redo <name> shot=<id> stage=image  Force the image or video stage"
+	@echo "  make shots <name>                       Numbered shot table (alias: make list)"
+	@echo "  make redo <name> shot=<n>               Redo that shot. shot= is a number or an id"
+	@echo "  make redo <name> shot=<n> stage=image   Force the image or video stage"
 	@echo "  make takes <name>                       List takes"
-	@echo "  make pick <name> shot=<id> take=<id>    Select a take (image-1, video-1, ...)"
+	@echo "  make pick <name> shot=<n> take=<id>     Select a take (image-1, video-1, ...)"
 	@echo "  make render <name>                      Re-render. No generation"
 	@echo "  make open <name>                        Open projects/<name>/output.mp4"
 	@echo ""
 	@echo "name=<name> works in place of the positional name."
+	@echo "shot=<n> is the number from make shots, or the shot id."
 	@echo "images and prod ask before any paid call. They do not pass --yes."
 	@echo "renderer=ffmpeg is the default here. renderer=remotion uses Chrome."
 
@@ -49,7 +51,7 @@ require-name:
 
 require-shot: require-name
 	@if [ -z "$(shot)" ]; then \
-	  echo "Name the shot: make redo $(project_name) shot=<id>"; \
+	  echo "Name the shot: make redo $(project_name) shot=<n>"; \
 	  exit 1; \
 	fi
 
@@ -78,12 +80,15 @@ prod: require-name
 redo: require-shot
 	npm run --silent studio -- redo $(PROJECT) $(shot) $(if $(stage),--stage $(stage),)
 
+shots list: require-name
+	npm run --silent studio -- shots $(PROJECT)
+
 takes: require-name
 	npm run --silent studio -- takes $(PROJECT)
 
 pick: require-name
 	@if [ -z "$(shot)" ] || [ -z "$(take)" ]; then \
-	  echo "Usage: make pick $(project_name) shot=<id> take=<take-id>"; \
+	  echo "Usage: make pick $(project_name) shot=<n> take=<take-id>"; \
 	  exit 1; \
 	fi
 	npm run --silent studio -- select $(PROJECT) $(shot) $(take)

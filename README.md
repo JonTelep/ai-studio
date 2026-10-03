@@ -59,8 +59,9 @@ The Makefile calls the CLI. You can run the CLI directly:
 npm run studio -- dry projects/ocean/project.yaml
 npm run studio -- images projects/ocean/project.yaml
 npm run studio -- prod projects/ocean/project.yaml --renderer ffmpeg
+npm run studio -- shots projects/ocean/project.yaml
 npm run studio -- takes projects/ocean/project.yaml
-npm run studio -- select projects/ocean/project.yaml horizon image-1
+npm run studio -- select projects/ocean/project.yaml 1 image-1
 ```
 
 | Flag | What it does |
@@ -74,7 +75,9 @@ npm run studio -- select projects/ocean/project.yaml horizon image-1
 | `--analyzer energy\|python` | Beat tracker. Default `energy` |
 | `--whisper` | Optional local Whisper word timestamps |
 
-Other Make targets: `make redo <name> shot=<id>` (image if that shot has no video yet, otherwise video; `stage=image` or `stage=video` forces it), `make pick <name> shot=<id> take=image-1`, `make render <name>` (no generation), `make open <name>`.
+`make shots <name>` (alias `make list`) prints a numbered table: number, id, kind, duration, a short description, on-screen text, and status (`no image`, `image ready`, `video ready`, or `selected <take>` when several takes exist). `shot=` accepts that number or the id.
+
+Other Make targets: `make redo <name> shot=2` (image if that shot has no video yet, otherwise video; `stage=image` or `stage=video` forces it), `make pick <name> shot=2 take=image-1`, `make render <name>` (no generation), `make open <name>`.
 
 `make script <name>` runs Claude Code headless (`claude -p`) when it is installed. It reads `idea.md`, `images/`, and `CLAUDE.md`, updates `project.yaml`, and validates it. It does not generate video. If `claude` is missing, the target explains how to install it and stops.
 

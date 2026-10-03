@@ -13,7 +13,7 @@ Do these in order. Do not skip ahead.
 5. `make images <name>` generates stills only (it skips files the human already supplied) and writes `contact-sheet.jpg`.
 6. `make prod <name>` generates video, voice, and sound, then renders `output.mp4`. It refuses to start when a shot that needs a still does not have one. The human runs `make images` first.
 
-`make redo <name> shot=<id>` regenerates one shot. `make render <name>` re-renders without generating. `make takes` and `make pick` choose an earlier take.
+`make shots <name>` (alias `make list`) prints the numbered shot table. `shot=` on `make redo` and `make pick` accepts that number or the shot id. `make redo <name> shot=<n>` regenerates one shot. `make render <name>` re-renders without generating. `make takes` and `make pick` choose an earlier take.
 
 ## Rules
 

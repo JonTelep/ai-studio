@@ -6,6 +6,7 @@ import { resolveWorkDir } from './project/layout.js';
 import { generateProject } from './pipeline/generate.js';
 import { loadManifest, saveManifest, selectTake } from './pipeline/manifest.js';
 import { renderProject } from './pipeline/render.js';
+import { listShots, resolveShotId } from './pipeline/shot-list.js';
 import { StudioError } from './util/ffmpeg.js';
 import {
   dryProject,
@@ -46,6 +47,11 @@ async function main(): Promise<void> {
   }
   if (args.command === 'redo') {
     await redoShot(projectPath, args.shotId as string, args.stage);
+    return;
+  }
+  if (args.command === 'shots') {
+    const project = loadProject(projectPath);
+    listShots(project, resolveWorkDir(project));
     return;
   }
   if (args.command === 'takes') {
@@ -103,9 +109,11 @@ function printTakes(projectPath: string): void {
   console.log(lines.join('\n'));
 }
 
-function select(projectPath: string, shotId: string, takeId: string): void {
-  const { slug, workDir } = workDirFor(projectPath);
-  const manifest = loadManifest(workDir, slug);
+function select(projectPath: string, shotRef: string, takeId: string): void {
+  const project = loadProject(projectPath);
+  const shotId = resolveShotId(project.shots, shotRef);
+  const workDir = resolveWorkDir(project);
+  const manifest = loadManifest(workDir, project.slug);
   const next = selectTake(manifest, shotId, takeId);
   saveManifest(workDir, next);
   console.log(`Selected ${takeId} for ${shotId}.`);

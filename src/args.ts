@@ -12,7 +12,8 @@ type Command =
   | 'dry'
   | 'images'
   | 'prod'
-  | 'redo';
+  | 'redo'
+  | 'shots';
 
 export type CliArgs = {
   command: Command;
@@ -37,13 +38,14 @@ Usage
   npm run studio -- render <project.yaml> [--renderer remotion|ffmpeg]
   npm run studio -- all <project.yaml> [flags]
   npm run studio -- takes <project.yaml>
-  npm run studio -- select <project.yaml> <shotId> <takeId>
+  npm run studio -- select <project.yaml> <shot> <takeId>
   npm run studio -- new <name>
   npm run studio -- validate <project.yaml>
   npm run studio -- dry <project.yaml>
   npm run studio -- images <project.yaml>
   npm run studio -- prod <project.yaml> [--renderer ffmpeg]
-  npm run studio -- redo <project.yaml> <shotId> [--stage image|video]
+  npm run studio -- redo <project.yaml> <shot> [--stage image|video]
+  npm run studio -- shots <project.yaml>
 
 Flags
   --yes                 Run paid generations without a confirmation prompt
@@ -61,7 +63,8 @@ It does not pass --yes. Confirm a paid count in the terminal before it runs.
 Examples
   npm run studio -- all projects/ocean/project.yaml --yes --renderer ffmpeg
   npm run studio -- dry projects/ocean/project.yaml
-  npm run studio -- select projects/ocean/project.yaml horizon image-1
+  npm run studio -- shots projects/ocean/project.yaml
+  npm run studio -- select projects/ocean/project.yaml 1 image-1
 `;
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -80,6 +83,7 @@ export function parseArgs(argv: string[]): CliArgs {
     'images',
     'prod',
     'redo',
+    'shots',
   ];
   if (!known.includes(command)) {
     throw new StudioError(`Unknown command "${command}".\n\n${HELP}`);
@@ -140,12 +144,12 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!positionals[0]) throw new StudioError(`Missing project file.\n\n${HELP}`);
   args.project = positionals[0];
   if (command === 'redo') {
-    if (!positionals[1]) throw new StudioError(`redo needs a shot id.\n\n${HELP}`);
+    if (!positionals[1]) throw new StudioError(`redo needs a shot number or id.\n\n${HELP}`);
     args.shotId = positionals[1];
   }
   if (command === 'select') {
     if (!positionals[1] || !positionals[2]) {
-      throw new StudioError(`select needs a shot id and a take id.\n\n${HELP}`);
+      throw new StudioError(`select needs a shot number or id, and a take id.\n\n${HELP}`);
     }
     args.shotId = positionals[1];
     args.takeId = positionals[2];
