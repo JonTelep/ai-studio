@@ -2,6 +2,7 @@ title: Monday Meeting
 aspect: "9:16"
 fps: 30
 provider: placeholder
+assets: images
 models:
   image: fal-ai/flux/dev
   video: fal-ai/kling-video/v3/pro/image-to-video
@@ -34,7 +35,7 @@ voiceover:
   script: When the sprint is just one meeting that could have been an email
   provider: placeholder
 music:
-  file: ../assets/meme-beat.wav
+  file: ../../assets/meme-beat.wav
   volume: 0.35
 captions:
   style: impact

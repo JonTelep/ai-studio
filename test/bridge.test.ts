@@ -12,7 +12,7 @@ import { loadProject } from '../src/project/load.js';
 
 describe('first and last frame', () => {
   it('plans a supplied still, a bridge from the previous frame, and the arrival still', () => {
-    const project = loadProject('projects/bridge.yaml');
+    const project = loadProject('projects/bridge/project.yaml');
     expect(planShotMedia(project.shots[0])).toEqual({
       source: 'image',
       generateImage: false,

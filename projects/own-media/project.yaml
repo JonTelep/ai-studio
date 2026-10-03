@@ -2,7 +2,7 @@ title: Brought Media
 aspect: "16:9"
 fps: 30
 provider: placeholder
-assets: assets
+assets: images
 models:
   image: fal-ai/flux/dev
   video: bytedance/seedance-2.0/image-to-video

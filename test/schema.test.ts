@@ -157,8 +157,8 @@ shots:
   });
 
   it('loads the checked-in examples', () => {
-    const ocean = loadProject('projects/ocean.yaml');
-    const meme = loadProject('projects/meme-example.yaml');
+    const ocean = loadProject('projects/ocean/project.yaml');
+    const meme = loadProject('projects/meme-example/project.yaml');
     expect(ocean.shots).toHaveLength(3);
     expect(ocean.provider).toBe('placeholder');
     expect(ocean.shots.reduce((sum, shot) => sum + shot.duration, 0)).toBe(10);
@@ -166,12 +166,12 @@ shots:
     expect(meme.voiceover?.script).toMatch(/email/);
     expect(meme.edit.snapCutsToBeats).toBe(true);
     expect(meme.music?.file).toContain('meme-beat.wav');
-    const own = loadProject('projects/own-media.yaml');
-    expect(own.assets).toBe('assets');
+    const own = loadProject('projects/own-media/project.yaml');
+    expect(own.assets).toBe('images');
     expect(own.references?.character).toBe('character.png');
     expect(own.shots.map((shot) => shot.id)).toEqual(['photo', 'animated', 'clip']);
     expect(own.shots[2].kind).toBe('video');
-    const bridge = loadProject('projects/bridge.yaml');
+    const bridge = loadProject('projects/bridge/project.yaml');
     expect(bridge.shots.map((shot) => shot.id)).toEqual(['photo-a', 'crossing', 'photo-b']);
     expect(bridge.shots[1].kind).toBe('video');
     expect(bridge.shots[1].start_from).toBe('previous');

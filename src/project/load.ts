@@ -65,7 +65,8 @@ export function loadProject(file: string): LoadedProject {
   if (!result.success) {
     throw new ProjectError(formatZodError(result.error));
   }
-  const slug = path.basename(absolute).replace(/\.(ya?ml|json)$/i, '');
+  const base = path.basename(absolute).replace(/\.(ya?ml|json)$/i, '');
+  const slug = base === 'project' ? path.basename(path.dirname(absolute)) : base;
   return { ...result.data, file: absolute, slug };
 }
 

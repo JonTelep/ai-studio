@@ -1,10 +1,23 @@
 import { StudioError } from './util/ffmpeg.js';
 
-type Command = 'generate' | 'render' | 'all' | 'takes' | 'select' | 'help';
+type Command =
+  | 'generate'
+  | 'render'
+  | 'all'
+  | 'takes'
+  | 'select'
+  | 'help'
+  | 'new'
+  | 'validate'
+  | 'dry'
+  | 'images'
+  | 'prod'
+  | 'redo';
 
 export type CliArgs = {
   command: Command;
   project?: string;
+  name?: string;
   yes: boolean;
   dryRun: boolean;
   fresh: boolean;
@@ -14,6 +27,7 @@ export type CliArgs = {
   analyzer: 'energy' | 'python';
   shotId?: string;
   takeId?: string;
+  stage?: 'image' | 'video';
 };
 
 export const HELP = `ai-studio — open-source AI video studio
@@ -24,6 +38,12 @@ Usage
   npm run studio -- all <project.yaml> [flags]
   npm run studio -- takes <project.yaml>
   npm run studio -- select <project.yaml> <shotId> <takeId>
+  npm run studio -- new <name>
+  npm run studio -- validate <project.yaml>
+  npm run studio -- dry <project.yaml>
+  npm run studio -- images <project.yaml>
+  npm run studio -- prod <project.yaml> [--renderer ffmpeg]
+  npm run studio -- redo <project.yaml> <shotId> [--stage image|video]
 
 Flags
   --yes                 Run paid generations without a confirmation prompt
@@ -31,19 +51,36 @@ Flags
   --fresh               Ignore cached takes and generate new ones
   --provider <name>     placeholder, fal, or auto (default: the project file)
   --renderer <name>     remotion (default) or ffmpeg
+  --stage <name>        image or video, for redo
   --whisper             Replace voice timestamps with local Whisper (optional)
   --analyzer <name>     energy (default) or python (optional librosa)
 
+The Makefile is the usual way in: make dry <name>, make images <name>, make prod <name>.
+It does not pass --yes. Confirm a paid count in the terminal before it runs.
+
 Examples
-  npm run studio -- all projects/ocean.yaml --yes
-  npm run studio -- generate projects/meme-example.yaml --dry-run
-  npm run studio -- select projects/ocean.yaml horizon image-1
+  npm run studio -- all projects/ocean/project.yaml --yes --renderer ffmpeg
+  npm run studio -- dry projects/ocean/project.yaml
+  npm run studio -- select projects/ocean/project.yaml horizon image-1
 `;
 
 export function parseArgs(argv: string[]): CliArgs {
   const tokens = argv.slice(2);
   const command = (tokens[0] ?? 'help') as Command;
-  const known: Command[] = ['generate', 'render', 'all', 'takes', 'select', 'help'];
+  const known: Command[] = [
+    'generate',
+    'render',
+    'all',
+    'takes',
+    'select',
+    'help',
+    'new',
+    'validate',
+    'dry',
+    'images',
+    'prod',
+    'redo',
+  ];
   if (!known.includes(command)) {
     throw new StudioError(`Unknown command "${command}".\n\n${HELP}`);
   }
@@ -74,6 +111,13 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       args.renderer = value;
       i += 1;
+    }     else if (token === '--stage') {
+      const value = requiredValue(token, next);
+      if (value !== 'image' && value !== 'video') {
+        throw new StudioError(`Unknown stage "${value}". Use image or video.`);
+      }
+      args.stage = value;
+      i += 1;
     } else if (token === '--analyzer') {
       const value = requiredValue(token, next);
       if (value !== 'energy' && value !== 'python') {
@@ -88,8 +132,17 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
   if (command === 'help') return args;
+  if (command === 'new') {
+    if (!positionals[0]) throw new StudioError(`new needs a project name.\n\n${HELP}`);
+    args.name = positionals[0];
+    return args;
+  }
   if (!positionals[0]) throw new StudioError(`Missing project file.\n\n${HELP}`);
   args.project = positionals[0];
+  if (command === 'redo') {
+    if (!positionals[1]) throw new StudioError(`redo needs a shot id.\n\n${HELP}`);
+    args.shotId = positionals[1];
+  }
   if (command === 'select') {
     if (!positionals[1] || !positionals[2]) {
       throw new StudioError(`select needs a shot id and a take id.\n\n${HELP}`);

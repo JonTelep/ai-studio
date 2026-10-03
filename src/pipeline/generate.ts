@@ -12,6 +12,7 @@ import { resolveMediaProvider, resolveVoiceProvider } from '../providers/registr
 import type { MediaProvider, VoiceProvider } from '../providers/types.js';
 import { confirmPaid } from './confirm.js';
 import { emptyCache, estimateFromCache, formatEstimate, type Estimate } from './estimate.js';
+import { resolveWorkDir } from '../project/layout.js';
 import {
   addTake,
   loadManifest,
@@ -29,6 +30,8 @@ import { planShotMedia, type ShotMediaPlan } from './shot-media.js';
 import { fileStamp, requireAsset, resolveAssetsDir } from './paths.js';
 import { collectReferenceFiles } from './references.js';
 
+export type GenerateScope = 'all' | 'images' | 'videos';
+
 export type GenerateOptions = {
   projectPath: string;
   yes: boolean;
@@ -38,6 +41,11 @@ export type GenerateOptions = {
   whisper: boolean;
   analyzer: 'energy' | 'python';
   workRoot?: string;
+  /** images: stills only. videos: clips, voice, and sound, using stills that already exist. */
+  scope?: GenerateScope;
+  onlyShot?: string;
+  freshImages?: boolean;
+  freshVideos?: boolean;
 };
 
 export type GenerateResult = {
@@ -235,6 +243,29 @@ function voiceHash(
   });
 }
 
+function presentEstimate(estimate: Estimate, scope: GenerateScope, skipVoice: boolean): Estimate {
+  if (scope === 'images') {
+    return {
+      ...estimate,
+      videos: 0,
+      voices: 0,
+      paid: estimate.mediaProvider === 'placeholder' ? 0 : estimate.images,
+    };
+  }
+  if (scope === 'videos' || skipVoice) {
+    const voicePaid =
+      !skipVoice && estimate.voiceProvider && estimate.voiceProvider !== 'placeholder' ? estimate.voices : 0;
+    const videoPaid = estimate.mediaProvider === 'placeholder' ? 0 : estimate.videos;
+    return {
+      ...estimate,
+      images: scope === 'videos' ? 0 : estimate.images,
+      voices: skipVoice ? 0 : estimate.voices,
+      paid: (scope === 'videos' ? videoPaid : estimate.mediaProvider === 'placeholder' ? 0 : estimate.images + videoPaid) + voicePaid,
+    };
+  }
+  return estimate;
+}
+
 export async function generateProject(options: GenerateOptions): Promise<GenerateResult> {
   const project = loadProject(options.projectPath);
   if (options.provider) {
@@ -243,7 +274,12 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     }
     project.provider = options.provider as LoadedProject['provider'];
   }
-  const workDir = path.resolve(options.workRoot ?? 'work', project.slug);
+  const scope = options.scope ?? 'all';
+  const workDir = resolveWorkDir(project, options.workRoot);
+  const refreshImage = (shotId: string) =>
+    (!options.onlyShot || options.onlyShot === shotId) && (options.fresh || options.freshImages === true);
+  const refreshVideo = (shotId: string) =>
+    (!options.onlyShot || options.onlyShot === shotId) && (options.fresh || options.freshVideos === true);
   const manifest = loadManifest(workDir, project.slug);
   const media = resolveMediaProvider(project);
   const voice = resolveVoiceProvider(project);
@@ -270,7 +306,7 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
       size.height,
       references,
     );
-    if (!options.fresh && imageHashValue) {
+    if (!refreshImage(shot.id) && imageHashValue) {
       cache.images[shot.id] = Boolean(
         reusableTake(entry.takes, entry.selected.image, 'image', imageHashValue, workDir),
       );
@@ -285,13 +321,13 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
       size.height,
       references,
     );
-    if (!options.fresh && endHashValue) {
+    if (!refreshImage(shot.id) && endHashValue) {
       cache.ends[shot.id] = Boolean(reusableTake(entry.takes, entry.selected.end, 'end', endHashValue, workDir));
     }
     const previousStamp =
       !options.fresh && !previousUnstable ? lastFrameStamp(manifest, project.shots[index - 1], workDir) : null;
     let videoHit = false;
-    if (!options.fresh && (mediaPlan.generateVideo || mediaPlan.source === 'video')) {
+    if (scope !== 'images' && !refreshVideo(shot.id) && (mediaPlan.generateVideo || mediaPlan.source === 'video')) {
       if (mediaPlan.source === 'video' && files.video) {
         const hash = suppliedVideoHash(files.video, shot, size.width, size.height, project.fps);
         videoHit = Boolean(reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir));
@@ -322,7 +358,8 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
       previousUnstable = true;
     }
   }
-  if (!options.fresh && project.voiceover && voice) {
+  const skipVoice = scope === 'images' || Boolean(options.onlyShot);
+  if (!skipVoice && !options.fresh && project.voiceover && voice) {
     const model = project.voiceover.model ?? project.models.voice;
     cache.voice = Boolean(
       reusableTake(
@@ -335,22 +372,28 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     );
   }
 
-  const estimate = estimateFromCache(project, cache, {
-    mediaPaid: media.paid,
-    voicePaid: Boolean(voice?.paid),
-    mediaProvider: media.id,
-    voiceProvider: voice?.id ?? null,
-  });
+  const fullEstimate = estimateFromCache(
+    options.onlyShot ? { ...project, shots: project.shots.filter((shot) => shot.id === options.onlyShot), voiceover: undefined } : project,
+    cache,
+    {
+      mediaPaid: media.paid,
+      voicePaid: Boolean(voice?.paid),
+      mediaProvider: media.id,
+      voiceProvider: voice?.id ?? null,
+    },
+  );
+  const estimate = presentEstimate(fullEstimate, scope, skipVoice);
   console.log(formatEstimate(estimate, `${project.title} — ${project.aspect} — ${project.fps} fps — ${project.shots.length} shots — ${projectDuration(project).toFixed(1)}s`));
   if (options.dryRun) {
     console.log('Dry run. No files were written and no providers were called.');
     return { project, estimate, workDir, manifest };
   }
-  await confirmPaid(estimate.paid, options.yes);
+  await confirmPaid(estimate.paid, options.yes, scope === 'images' ? 'paid image' : 'paid API call');
 
   mkdirSync(workDir, { recursive: true });
   for (let index = 0; index < project.shots.length; index += 1) {
     const shot = project.shots[index];
+    if (options.onlyShot && shot.id !== options.onlyShot) continue;
     const files = shotFiles.get(shot.id) ?? collectShotFiles(project, shot, assetsDir);
     await generateShot({
       project,
@@ -359,18 +402,20 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
       media,
       manifest,
       workDir,
-      fresh: options.fresh,
+      scope,
+      refreshImage: refreshImage(shot.id),
+      refreshVideo: refreshVideo(shot.id),
       size,
       assetsDir,
       files,
     });
     saveManifest(workDir, manifest);
   }
-  if (project.voiceover && voice) {
+  if (!skipVoice && project.voiceover && voice) {
     await generateVoice({ project, voice, manifest, workDir, fresh: options.fresh, whisper: options.whisper });
     saveManifest(workDir, manifest);
   }
-  if (project.music) {
+  if (scope !== 'images' && project.music) {
     const musicFile = requireAsset(project.file, project.music.file, 'Music file', assetsDir);
     const outFile = path.join(workDir, 'analysis', 'music.json');
     console.log(`Analyzing music (${options.analyzer})…`);
@@ -378,8 +423,10 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     manifest.analysis.music = path.relative(workDir, outFile);
     saveManifest(workDir, manifest);
   }
-  for (const effect of project.sfx) {
-    requireAsset(project.file, effect.file, 'SFX file', assetsDir);
+  if (scope !== 'images') {
+    for (const effect of project.sfx) {
+      requireAsset(project.file, effect.file, 'SFX file', assetsDir);
+    }
   }
   console.log(`Manifest: ${path.join(workDir, 'manifest.json')}`);
   return { project, estimate, workDir, manifest };
@@ -403,14 +450,21 @@ async function generateShot(input: {
   media: MediaProvider;
   manifest: Manifest;
   workDir: string;
-  fresh: boolean;
+  scope: GenerateScope;
+  refreshImage: boolean;
+  refreshVideo: boolean;
   size: { width: number; height: number };
   assetsDir?: string;
   files: ShotFiles;
 }): Promise<void> {
-  const { project, shot, index, media, manifest, workDir, fresh, size, assetsDir, files } = input;
+  const { project, shot, index, media, manifest, workDir, scope, refreshImage, refreshVideo, size, assetsDir, files } =
+    input;
   const entry = shotEntry(manifest, shot.id);
   const mediaPlan = planShotMedia(shot);
+  const generatesStill =
+    mediaPlan.generateImage || mediaPlan.start?.type === 'generate' || mediaPlan.end?.type === 'generate';
+  if (scope === 'images' && !generatesStill && !refreshImage) return;
+  const skipSupplied = scope === 'images' && !refreshImage;
   const referenceFiles = collectReferenceFiles(project, shot, assetsDir);
   const referenceStamps = referenceFiles.map(fileStamp);
   let imageTake: Take | undefined;
@@ -418,7 +472,7 @@ async function generateShot(input: {
 
   if (mediaPlan.source === 'video' && files.video) {
     const hash = suppliedVideoHash(files.video, shot, size.width, size.height, project.fps);
-    const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
+    const cached = refreshVideo ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
     if (cached) {
       console.log(`video ${shot.id} cached (${cached.id})`);
       entry.selected.video = cached.id;
@@ -434,7 +488,7 @@ async function generateShot(input: {
     return;
   }
 
-  if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'previous') {
+  if (scope !== 'images' && mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'previous') {
     const previous = project.shots[index - 1];
     const previousEntry = previous ? manifest.shots[previous.id] : undefined;
     const relative = previousEntry?.lastFrame;
@@ -445,13 +499,13 @@ async function generateShot(input: {
     }
     startAbsolute = path.join(workDir, relative);
     console.log(`video ${shot.id} start from ${previous.id} last frame`);
-  } else if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'file') {
+  } else if (!skipSupplied && mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'file') {
     const file = files.start ?? files.image;
     if (!file) throw new StudioError(`Shot "${shot.id}" is missing its start image.`);
     imageTake = await importStill({
       entry,
       workDir,
-      fresh,
+      fresh: refreshImage,
       shotId: shot.id,
       source: file,
       label: framePath(shot.start_image) ?? shot.image ?? file,
@@ -461,10 +515,12 @@ async function generateShot(input: {
     });
     startAbsolute = path.join(workDir, imageTake.path);
   } else if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'generate') {
-    imageTake = await generateStill({
+    if (scope === 'videos') {
+      imageTake = existingStill(entry, workDir, 'image', shot.id);
+      startAbsolute = path.join(workDir, imageTake.path);
+    } else imageTake = await generateStill({
       entry,
       workDir,
-      fresh,
       shot,
       media,
       project,
@@ -482,15 +538,16 @@ async function generateShot(input: {
       kind: 'image',
       width: size.width,
       height: size.height,
+      fresh: refreshImage,
     });
-    startAbsolute = path.join(workDir, imageTake.path);
-  } else if (mediaPlan.source === 'image') {
+    if (scope !== 'videos') startAbsolute = path.join(workDir, imageTake.path);
+  } else if (!skipSupplied && mediaPlan.source === 'image') {
     const file = files.image ?? files.start;
     if (!file) throw new StudioError(`Shot "${shot.id}" is missing its still.`);
     imageTake = await importStill({
       entry,
       workDir,
-      fresh,
+      fresh: refreshImage,
       shotId: shot.id,
       source: file,
       label: shot.image ?? framePath(shot.start_image) ?? file,
@@ -499,33 +556,37 @@ async function generateShot(input: {
       height: size.height,
     });
   } else if (mediaPlan.generateImage) {
-    const nested = framePrompt(shot.start_image);
-    const hash = nested
-      ? frameImageHash(nested, media.id, project.models.image, size.width, size.height, referenceStamps, 'start')
-      : imageHash(shot, media.id, project.models.image, size.width, size.height, referenceStamps);
-    imageTake = await generateStill({
-      entry,
-      workDir,
-      fresh,
-      shot,
-      media,
-      project,
-      referenceFiles,
-      hash,
-      prompt: nested ?? shot.prompt ?? '',
-      kind: 'image',
-      width: size.width,
-      height: size.height,
-    });
+    if (scope === 'videos') {
+      imageTake = existingStill(entry, workDir, 'image', shot.id);
+    } else {
+      const nested = framePrompt(shot.start_image);
+      const hash = nested
+        ? frameImageHash(nested, media.id, project.models.image, size.width, size.height, referenceStamps, 'start')
+        : imageHash(shot, media.id, project.models.image, size.width, size.height, referenceStamps);
+      imageTake = await generateStill({
+        entry,
+        workDir,
+        shot,
+        media,
+        project,
+        referenceFiles,
+        hash,
+        prompt: nested ?? shot.prompt ?? '',
+        kind: 'image',
+        width: size.width,
+        height: size.height,
+        fresh: refreshImage,
+      });
+    }
     startAbsolute = path.join(workDir, imageTake.path);
   }
 
   let endAbsolute: string | undefined;
-  if (mediaPlan.end?.type === 'file' && files.end) {
+  if (!skipSupplied && mediaPlan.end?.type === 'file' && files.end) {
     const endTake = await importStill({
       entry,
       workDir,
-      fresh,
+      fresh: refreshImage,
       shotId: shot.id,
       source: files.end,
       label: framePath(shot.end_image) ?? files.end,
@@ -536,10 +597,13 @@ async function generateShot(input: {
     });
     endAbsolute = path.join(workDir, endTake.path);
   } else if (mediaPlan.end?.type === 'generate') {
+    if (scope === 'videos') {
+      const endTake = existingStill(entry, workDir, 'end', shot.id);
+      endAbsolute = path.join(workDir, endTake.path);
+    } else {
     const endTake = await generateStill({
       entry,
       workDir,
-      fresh,
       shot,
       media,
       project,
@@ -557,11 +621,13 @@ async function generateShot(input: {
       kind: 'end',
       width: size.width,
       height: size.height,
+      fresh: refreshImage,
     });
     endAbsolute = path.join(workDir, endTake.path);
+    }
   }
 
-  if (!mediaPlan.generateVideo) {
+  if (scope === 'images' || !mediaPlan.generateVideo) {
     if (imageTake) entry.lastFrame = imageTake.path;
     return;
   }
@@ -579,7 +645,7 @@ async function generateShot(input: {
     stamps.imageStamp,
     stamps.endStamp,
   );
-  const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
+  const cached = refreshVideo ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
   if (cached) {
     console.log(`video ${shot.id} cached (${cached.id})`);
     entry.selected.video = cached.id;
@@ -621,6 +687,17 @@ async function generateShot(input: {
     status: 'done',
   });
   await rememberLastFrame(entry, workDir, shot.id, relative, false);
+}
+
+function existingStill(entry: ShotEntry, workDir: string, kind: 'image' | 'end', shotId: string): Take {
+  const take = selectedTake(entry, kind, workDir);
+  if (!take) {
+    throw new StudioError(
+      `Shot "${shotId}" needs a ${kind === 'end' ? 'end still' : 'still'}. Run make images first.`,
+    );
+  }
+  entry.selected[kind] = take.id;
+  return take;
 }
 
 async function importStill(input: {

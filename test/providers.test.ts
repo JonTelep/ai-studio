@@ -54,7 +54,7 @@ describe('providers', () => {
   it('stays on the placeholder when the project says so, even with a key', () => {
     process.env.FAL_KEY = 'test-key';
     process.env.ELEVENLABS_API_KEY = 'test-key';
-    const meme = loadProject('projects/meme-example.yaml');
+    const meme = loadProject('projects/meme-example/project.yaml');
     expect(resolveMediaProvider(meme).id).toBe('placeholder');
     expect(resolveVoiceProvider(meme)?.id).toBe('placeholder');
     expect(resolveMediaProvider(meme, 'fal').paid).toBe(true);
@@ -63,7 +63,7 @@ describe('providers', () => {
   it('uses fal and elevenlabs for auto only when keys exist', () => {
     delete process.env.FAL_KEY;
     delete process.env.ELEVENLABS_API_KEY;
-    const ocean = loadProject('projects/ocean.yaml');
+    const ocean = loadProject('projects/ocean/project.yaml');
     ocean.provider = 'auto';
     expect(resolveMediaProvider(ocean).id).toBe('placeholder');
     process.env.FAL_KEY = 'test-key';

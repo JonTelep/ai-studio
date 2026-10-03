@@ -11,7 +11,7 @@ import { loadProject } from '../src/project/load.js';
 
 describe('supplied media', () => {
   it('plans stills, animated stills, and clips', () => {
-    const project = loadProject('projects/own-media.yaml');
+    const project = loadProject('projects/own-media/project.yaml');
     expect(planShotMedia(project.shots[0])).toEqual({
       source: 'image',
       generateImage: false,

@@ -4,7 +4,7 @@ import { loadProject } from '../src/project/load.js';
 
 describe('estimate', () => {
   it('counts image-to-video as one still plus one video, and ignores cache hits', () => {
-    const project = loadProject('projects/ocean.yaml');
+    const project = loadProject('projects/ocean/project.yaml');
     const fresh = estimateFromCache(project, emptyCache(project), {
       mediaPaid: true,
       voicePaid: false,
@@ -30,7 +30,7 @@ describe('estimate', () => {
   });
 
   it('charges nothing for the placeholder provider', () => {
-    const project = loadProject('projects/meme-example.yaml');
+    const project = loadProject('projects/meme-example/project.yaml');
     const estimate = estimateFromCache(project, emptyCache(project), {
       mediaPaid: false,
       voicePaid: false,
@@ -44,7 +44,7 @@ describe('estimate', () => {
   });
 
   it('does not bill a supplied still or clip, and bills only the video when a still is animated', () => {
-    const project = loadProject('projects/own-media.yaml');
+    const project = loadProject('projects/own-media/project.yaml');
     const estimate = estimateFromCache(project, emptyCache(project), {
       mediaPaid: true,
       voicePaid: false,
@@ -58,7 +58,7 @@ describe('estimate', () => {
   });
 
   it('bills the transition and generated frames, and skips the previous frame', () => {
-    const project = loadProject('projects/bridge.yaml');
+    const project = loadProject('projects/bridge/project.yaml');
     const estimate = estimateFromCache(project, emptyCache(project), {
       mediaPaid: true,
       voicePaid: false,

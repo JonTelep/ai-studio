@@ -1,12 +1,20 @@
-import path from 'node:path';
 import { HELP, parseArgs } from './args.js';
 import { loadEnvFile } from './env.js';
 import { ProjectError } from './project/schema.js';
 import { loadProject } from './project/load.js';
+import { resolveWorkDir } from './project/layout.js';
 import { generateProject } from './pipeline/generate.js';
 import { loadManifest, saveManifest, selectTake } from './pipeline/manifest.js';
 import { renderProject } from './pipeline/render.js';
 import { StudioError } from './util/ffmpeg.js';
+import {
+  dryProject,
+  imagesProject,
+  prodProject,
+  redoShot,
+  scaffoldProject,
+  validateProject,
+} from './workflow.js';
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -15,7 +23,31 @@ async function main(): Promise<void> {
     console.log(HELP);
     return;
   }
+  if (args.command === 'new') {
+    scaffoldProject(args.name as string);
+    return;
+  }
   const projectPath = args.project as string;
+  if (args.command === 'validate') {
+    validateProject(projectPath);
+    return;
+  }
+  if (args.command === 'dry') {
+    await dryProject(projectPath);
+    return;
+  }
+  if (args.command === 'images') {
+    await imagesProject(projectPath);
+    return;
+  }
+  if (args.command === 'prod') {
+    await prodProject(projectPath, args.renderer);
+    return;
+  }
+  if (args.command === 'redo') {
+    await redoShot(projectPath, args.shotId as string, args.stage);
+    return;
+  }
   if (args.command === 'takes') {
     printTakes(projectPath);
     return;
@@ -43,12 +75,12 @@ async function main(): Promise<void> {
 
 function workDirFor(projectPath: string): { slug: string; workDir: string } {
   const project = loadProject(projectPath);
-  return { slug: project.slug, workDir: path.resolve('work', project.slug) };
+  return { slug: project.slug, workDir: resolveWorkDir(project) };
 }
 
 function printTakes(projectPath: string): void {
-  const { workDir } = workDirFor(projectPath);
-  const manifest = loadManifest(workDir, path.basename(workDir));
+  const { slug, workDir } = workDirFor(projectPath);
+  const manifest = loadManifest(workDir, slug);
   const lines: string[] = [];
   for (const [shotId, entry] of Object.entries(manifest.shots)) {
     if (entry.takes.length === 0) {

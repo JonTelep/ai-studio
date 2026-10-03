@@ -14,7 +14,7 @@ describe('placeholder pipeline', () => {
       'node',
       'studio',
       'all',
-      'projects/ocean.yaml',
+      'projects/ocean/project.yaml',
       '--yes',
       '--renderer',
       'ffmpeg',
@@ -24,7 +24,7 @@ describe('placeholder pipeline', () => {
     expect(args.yes).toBe(true);
     expect(args.dryRun).toBe(true);
     expect(args.renderer).toBe('ffmpeg');
-    expect(args.project).toBe('projects/ocean.yaml');
+    expect(args.project).toBe('projects/ocean/project.yaml');
   });
 
   it('generates, skips cached takes, and renders an mp4', async () => {

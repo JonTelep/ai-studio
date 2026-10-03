@@ -8,59 +8,77 @@ Inspired by agent-made music videos.
 
 ## Quick start
 
-Requires Node.js 20 or newer and ffmpeg.
+Requires Node.js 20 or newer, ffmpeg, and Make.
 
 ```bash
 git clone https://github.com/JonTelep/ai-studio.git
 cd ai-studio
 cp .env.example .env
 npm install
-npm run studio -- all projects/ocean.yaml --yes --renderer ffmpeg
+make dry ocean
 ```
 
-That renders `work/ocean/output.mp4` with the placeholder provider. No API key and no spend. The meme example does the same, with captions, a voice stand-in, and beat-snapped cuts:
+That validates `projects/ocean/project.yaml`, renders a free placeholder preview to `projects/ocean/output.mp4`, and prints how many paid calls a fal run would make. Nothing is billed. `make dry meme-example` does the same with captions, a voice stand-in, and beat-snapped cuts.
+
+A project lives in its own folder:
+
+```
+projects/<name>/project.yaml     shot list
+projects/<name>/idea.md          plain-words description
+projects/<name>/images/          your photos and clips
+projects/<name>/work/            takes (gitignored)
+projects/<name>/output.mp4       final render (gitignored)
+```
+
+`make` with no target prints the workflow, in order:
 
 ```bash
-npm run studio -- all projects/meme-example.yaml --yes --renderer ffmpeg
+make new starship          # or: make new name=starship
+make script starship       # optional: Claude Code drafts project.yaml from idea.md
+make dry starship          # validate, preview, print the paid-call count
+make images starship       # stills only, then projects/<name>/contact-sheet.jpg
+make prod starship         # video, voice, and sound, then output.mp4
 ```
 
-The default renderer is Remotion, which downloads a headless Chrome on first use:
+`make images` and `make prod` ask before any paid call. They do not pass `--yes`. `make prod` refuses to start when a shot that needs a still does not have one yet.
+
+The Makefile renders with ffmpeg so it does not download Chrome. The CLI default is still Remotion:
 
 ```bash
-npm run studio -- all projects/ocean.yaml --yes
+npm run studio -- render projects/ocean/project.yaml
+make prod ocean renderer=remotion
 ```
 
-`--renderer ffmpeg` uses the same shot list, camera moves, captions, and audio mix without Chrome. Use it in CI or on a machine where you do not want a browser download.
-
-To generate with fal.ai, put `FAL_KEY` in `.env` and point the project at fal:
-
-```bash
-npm run studio -- all projects/ocean.yaml --provider fal --yes
-```
-
-`--yes` is required for paid calls when stdin is not a terminal. Without it, the CLI prints the call count and asks. `--dry-run` prints that count and exits before any provider is called.
+To generate with fal.ai, put `FAL_KEY` in `.env`, set `provider: fal` in the project, run `make dry` to read the call count, then `make images` and `make prod`. Confirm each one in the terminal.
 
 ## Commands
 
+The Makefile calls the CLI. You can run the CLI directly:
+
 ```bash
-npm run studio -- generate projects/ocean.yaml
-npm run studio -- render projects/ocean.yaml
-npm run studio -- all projects/ocean.yaml
-npm run studio -- takes projects/ocean.yaml
-npm run studio -- select projects/ocean.yaml horizon image-1
+npm run studio -- dry projects/ocean/project.yaml
+npm run studio -- images projects/ocean/project.yaml
+npm run studio -- prod projects/ocean/project.yaml --renderer ffmpeg
+npm run studio -- takes projects/ocean/project.yaml
+npm run studio -- select projects/ocean/project.yaml horizon image-1
 ```
 
 | Flag | What it does |
 | --- | --- |
-| `--yes` | Skip the paid-call confirmation |
+| `--yes` | Skip the paid-call confirmation. The Makefile never sets this |
 | `--dry-run` | Print the estimate only |
 | `--fresh` | Ignore cached takes and make new ones |
 | `--provider placeholder\|fal\|auto` | Override the project provider |
-| `--renderer remotion\|ffmpeg` | Choose the encoder. Default `remotion` |
+| `--renderer remotion\|ffmpeg` | Choose the encoder. CLI default `remotion`. Makefile default `ffmpeg` |
+| `--stage image\|video` | Which stage `redo` regenerates |
 | `--analyzer energy\|python` | Beat tracker. Default `energy` |
 | `--whisper` | Optional local Whisper word timestamps |
 
-Generation writes every take under `work/<project>/` and a `manifest.json`. A later run skips a shot when a finished take has the same prompt, model, provider, and size, and the file is still on disk. `takes` lists them. `select` picks which image, video, or voice take the render uses. The selected take is marked with `*`.
+Other Make targets: `make redo <name> shot=<id>` (image if that shot has no video yet, otherwise video; `stage=image` or `stage=video` forces it), `make pick <name> shot=<id> take=image-1`, `make render <name>` (no generation), `make open <name>`.
+
+`make script <name>` runs Claude Code headless (`claude -p`) when it is installed. It reads `idea.md`, `images/`, and `CLAUDE.md`, updates `project.yaml`, and validates it. It does not generate video. If `claude` is missing, the target explains how to install it and stops.
+
+Generation writes takes under `projects/<name>/work/` and a `manifest.json`. A later run skips a shot when a finished take has the same prompt, model, provider, and size, and the file is still on disk. `make takes` lists them. `make pick` chooses which image, video, or voice take the render uses. The selected take is marked with `*`.
 
 ## Providers
 
@@ -84,7 +102,7 @@ The CLI prints how many image, video, and voice calls a run will make, and how m
 
 ## Project file
 
-YAML or JSON. See `projects/ocean.yaml` and `projects/meme-example.yaml`. `studio.config.yaml` supplies defaults. The project wins.
+YAML or JSON. See `projects/ocean/project.yaml` and `projects/meme-example/project.yaml`. `studio.config.yaml` supplies defaults. The project wins.
 
 | Field | Required | Notes |
 | --- | --- | --- |
@@ -136,14 +154,14 @@ Put stills and clips in a folder next to the project and point `assets` at it. A
 
 `image` skips image generation. On an image shot the edit uses that still, including Ken Burns. On a video shot it is the start frame for image-to-video, so you pay for the video only. `video` skips generation entirely: the clip is trimmed to the shot duration and fitted to the frame. Set one of those, not both.
 
-`references.style` and `references.character` keep a look or a person consistent across shots. Each shot can add `reference_images`. Those files are passed through on fal calls. See `projects/own-media.yaml`.
+`references.style` and `references.character` keep a look or a person consistent across shots. Each shot can add `reference_images`. Those files are passed through on fal calls. See `projects/own-media/project.yaml`. Drop the files in that project's `images/` folder.
 
 ```yaml
 title: Brought Media
 aspect: "16:9"
 fps: 30
 provider: placeholder
-assets: assets
+assets: images
 references:
   style: style.png
   character: character.png
@@ -167,14 +185,14 @@ shots:
 ```
 
 ```bash
-npm run studio -- all projects/own-media.yaml --yes --renderer ffmpeg
+make dry own-media
 ```
 
 ## First and last frame
 
 A video model that accepts a start frame and an end frame can fill in the motion between two pictures. `start_image` and `end_image` are each either a path or `{ prompt: ... }` when the still itself should be generated. `image` is the shorthand for a start frame you already have. `start_from: previous` uses the previous shot's last frame, so a sequence of photos plays as one continuous story. The first shot cannot use `previous`.
 
-`projects/bridge.yaml` is photo A, a generated transition into photo B, then photo B:
+`projects/bridge/project.yaml` is photo A, a generated transition into photo B, then photo B:
 
 ```yaml
 shots:
@@ -208,20 +226,20 @@ Frames can be generated instead of supplied:
 ```
 
 ```bash
-npm run studio -- all projects/bridge.yaml --yes --renderer ffmpeg
+make dry bridge
 ```
 
 Captions come from voiceover word timings when a voiceover exists. Otherwise they come from each shot's `text`. `impact` is bold centered meme type, `clean` is a bottom subtitle, `minimal` is a smaller lower-third. The current word is highlighted.
 
 ## Audio analysis
 
-Music is decoded with ffmpeg and tracked in TypeScript (energy envelope, onsets, autocorrelation tempo). The result is `work/<project>/analysis/music.json`:
+Music is decoded with ffmpeg and tracked in TypeScript (energy envelope, onsets, autocorrelation tempo). The result is `projects/<name>/work/analysis/music.json`:
 
 ```json
 { "source": "energy", "bpm": 120, "onsets": [0, 0.5], "beats": [0, 0.5] }
 ```
 
-Word timings are `work/<project>/voice/words.json`. Cuts snap to beats when `edit.snapCutsToBeats` is true. Captions snap to those words.
+Word timings are `projects/<name>/work/voice/words.json`. Cuts snap to beats when `edit.snapCutsToBeats` is true. Captions snap to those words.
 
 Optional Python extras, not installed by `npm install` and not used in CI:
 
@@ -234,7 +252,7 @@ pip install openai-whisper              # for --whisper
 
 ## Edit and render
 
-`src/composition/StudioVideo.tsx` is the Remotion composition. What you see at a frame depends only on the render plan and the time: which shot is active, the Ken Burns or pan transform on stills, the caption cue, and the audio. `render` bundles that composition and encodes an H.264 MP4, or the ffmpeg renderer builds the same timeline with zoompan, ASS captions, and an audio mix. Output is `work/<project>/output.mp4`. `work/` and `.env` are gitignored.
+`src/composition/StudioVideo.tsx` is the Remotion composition. What you see at a frame depends only on the render plan and the time: which shot is active, the Ken Burns or pan transform on stills, the caption cue, and the audio. `render` bundles that composition and encodes an H.264 MP4, or the ffmpeg renderer builds the same timeline with zoompan, ASS captions, and an audio mix. The Makefile writes `projects/<name>/output.mp4`. Takes stay in `projects/<name>/work/`. Both are gitignored, along with `.env`.
 
 ## Development
 
