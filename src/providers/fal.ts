@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { assertPaidAllowed } from '../env.js';
-import { extractMediaUrl, fluxImageSize, videoImageField } from './media-url.js';
+import { assignReferenceImages, extractMediaUrl, fluxImageSize, videoImageField } from './media-url.js';
 import type { GenerateImageInput, GenerateVideoInput, MediaProvider } from './types.js';
 
 type FalClient = {
@@ -20,6 +20,20 @@ async function client(): Promise<FalClient> {
   const imported = (await import('@fal-ai/client')) as { fal: FalClient };
   imported.fal.config({ credentials: key });
   return imported.fal;
+}
+
+async function uploadLocal(fal: FalClient, filePath: string): Promise<string> {
+  const bytes = await readFile(filePath);
+  const lower = filePath.toLowerCase();
+  const type = lower.endsWith('.png')
+    ? 'image/png'
+    : lower.endsWith('.webp')
+      ? 'image/webp'
+      : lower.endsWith('.gif')
+        ? 'image/gif'
+        : 'image/jpeg';
+  const file = new File([bytes], path.basename(filePath), { type });
+  return fal.storage.upload(file);
 }
 
 async function download(url: string, outPath: string): Promise<void> {
@@ -44,14 +58,14 @@ export const falMedia: MediaProvider = {
   paid: true,
   async generateImage(input: GenerateImageInput) {
     const fal = await client();
-    const result = await fal.subscribe(input.model, {
-      input: {
-        prompt: input.prompt,
-        image_size: fluxImageSize(input.aspect, input.width, input.height, input.model),
-        num_images: 1,
-      },
-      logs: false,
-    });
+    const referenceUrls = await Promise.all((input.referenceImages ?? []).map((file) => uploadLocal(fal, file)));
+    const body: Record<string, unknown> = {
+      prompt: input.prompt,
+      image_size: fluxImageSize(input.aspect, input.width, input.height, input.model),
+      num_images: 1,
+    };
+    assignReferenceImages(body, referenceUrls, input.referenceImageField);
+    const result = await fal.subscribe(input.model, { input: body, logs: false });
     await download(extractMediaUrl(payloadData(result)), input.outPath);
   },
   async generateVideo(input: GenerateVideoInput) {
@@ -62,12 +76,11 @@ export const falMedia: MediaProvider = {
       aspect_ratio: input.aspect,
     };
     if (input.mode === 'image-to-video') {
-      if (!input.imagePath) throw new Error('Image-to-video needs a generated still first.');
-      const bytes = await readFile(input.imagePath);
-      const file = new File([bytes], path.basename(input.imagePath), { type: 'image/png' });
-      const imageUrl = await fal.storage.upload(file);
-      body[videoImageField(input.model, input.imageField)] = imageUrl;
+      if (!input.imagePath) throw new Error('Image-to-video needs a still first.');
+      body[videoImageField(input.model, input.imageField)] = await uploadLocal(fal, input.imagePath);
     }
+    const referenceUrls = await Promise.all((input.referenceImages ?? []).map((file) => uploadLocal(fal, file)));
+    assignReferenceImages(body, referenceUrls, input.referenceImageField);
     const result = await fal.subscribe(input.model, { input: body, logs: false });
     await download(extractMediaUrl(payloadData(result)), input.outPath);
   },

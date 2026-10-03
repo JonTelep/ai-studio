@@ -40,5 +40,20 @@ describe('estimate', () => {
     expect(estimate.images).toBe(3);
     expect(estimate.voices).toBe(1);
     expect(estimate.paid).toBe(0);
+    expect(estimate.supplied).toBe(0);
+  });
+
+  it('does not bill a supplied still or clip, and bills only the video when a still is animated', () => {
+    const project = loadProject('projects/own-media.yaml');
+    const estimate = estimateFromCache(project, emptyCache(project), {
+      mediaPaid: true,
+      voicePaid: false,
+      mediaProvider: 'fal',
+      voiceProvider: null,
+    });
+    expect(estimate.images).toBe(0);
+    expect(estimate.videos).toBe(1);
+    expect(estimate.supplied).toBe(3);
+    expect(estimate.paid).toBe(1);
   });
 });

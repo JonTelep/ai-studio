@@ -29,6 +29,25 @@ export function videoImageField(model: string, override?: string): string {
   return 'image_url';
 }
 
+/**
+ * Attach reference stills without replacing a start frame that already uses the same key.
+ * A single-url field (`image_url`) gets one string. List fields get the whole array.
+ */
+export function assignReferenceImages(
+  body: Record<string, unknown>,
+  urls: string[],
+  field = 'reference_image_urls',
+): void {
+  if (urls.length === 0) return;
+  const existing = body[field];
+  if (typeof existing === 'string') {
+    body[field] = [existing, ...urls];
+    return;
+  }
+  const single = field.endsWith('_url') && !field.endsWith('_urls') && urls.length === 1;
+  body[field] = single ? urls[0] : urls;
+}
+
 export function fluxImageSize(aspect: '9:16' | '1:1' | '16:9', width: number, height: number, model: string) {
   if (model.includes('flux-2') || model.includes('flux/2')) {
     return { width, height };

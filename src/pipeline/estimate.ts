@@ -1,4 +1,5 @@
 import type { Project } from '../project/schema.js';
+import { planShotMedia } from './shot-media.js';
 
 export type CacheFlags = {
   images: Record<string, boolean>;
@@ -13,6 +14,7 @@ export type Estimate = {
   videos: number;
   voices: number;
   cached: number;
+  supplied: number;
   paid: number;
 };
 
@@ -32,22 +34,23 @@ export function estimateFromCache(
   let images = 0;
   let videos = 0;
   let cached = 0;
+  let supplied = 0;
   for (const shot of project.shots) {
-    const mode = shot.videoMode ?? 'image-to-video';
-    if (shot.kind === 'video' && mode === 'text-to-video') {
-      if (cache.videos[shot.id]) cached += 1;
-      else videos += 1;
-      continue;
-    }
-    if (shot.kind === 'video') {
+    const plan = planShotMedia(shot);
+    if (plan.generateImage) {
       if (cache.images[shot.id]) cached += 1;
       else images += 1;
+    } else if (plan.source === 'image') {
+      if (cache.images[shot.id]) cached += 1;
+      else supplied += 1;
+    }
+    if (plan.generateVideo) {
       if (cache.videos[shot.id]) cached += 1;
       else videos += 1;
-      continue;
+    } else if (plan.source === 'video') {
+      if (cache.videos[shot.id]) cached += 1;
+      else supplied += 1;
     }
-    if (cache.images[shot.id]) cached += 1;
-    else images += 1;
   }
   let voices = 0;
   if (project.voiceover) {
@@ -62,6 +65,7 @@ export function estimateFromCache(
     videos,
     voices,
     cached,
+    supplied,
     paid,
   };
 }
@@ -76,6 +80,7 @@ export function formatEstimate(estimate: Estimate, title: string): string {
     `Images to generate: ${estimate.images}`,
     `Videos to generate: ${estimate.videos}`,
     `Voice to generate: ${estimate.voices}`,
+    `Supplied files: ${estimate.supplied}`,
     `Cached takes: ${estimate.cached}`,
     `Paid API calls: ${estimate.paid}`,
   ];

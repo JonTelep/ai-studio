@@ -9,7 +9,7 @@ export const ShotSchema = z
       .string()
       .trim()
       .regex(/^[a-z0-9][a-z0-9_-]{0,40}$/i, 'Use a short id like "horizon" (letters, numbers, dash)'),
-    prompt: z.string().trim().min(1, 'Prompt is required'),
+    prompt: z.string().trim().min(1, 'Prompt is empty').optional(),
     duration: z
       .number({ invalid_type_error: 'Duration must be a number of seconds' })
       .positive('Duration must be greater than 0')
@@ -24,8 +24,29 @@ export const ShotSchema = z
         return trimmed ? trimmed : undefined;
       }),
     videoMode: z.enum(['image-to-video', 'text-to-video']).optional(),
+    image: z.string().trim().min(1).optional(),
+    video: z.string().trim().min(1).optional(),
+    reference_images: z.array(z.string().trim().min(1)).default([]),
   })
-  .strict();
+  .strict()
+  .superRefine((shot, ctx) => {
+    if (shot.image && shot.video) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Set image or video, not both. image supplies a still. video supplies a clip.',
+        path: ['video'],
+      });
+    }
+    const needsPrompt = !shot.video && (!shot.image || shot.kind === 'video');
+    if (needsPrompt && !shot.prompt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required unless image or video supplies the finished shot.',
+        path: ['prompt'],
+      });
+    }
+  })
+  .transform((shot) => (shot.video ? { ...shot, kind: 'video' as const } : shot));
 
 export const ProjectObjectSchema = z
   .object({
@@ -44,9 +65,19 @@ export const ProjectObjectSchema = z
         video: z.string().trim().min(1).default('bytedance/seedance-2.0/image-to-video'),
         voice: z.string().trim().min(1).default('eleven_multilingual_v2'),
         videoImageField: z.string().trim().min(1).optional(),
+        referenceImageField: z.string().trim().min(1).default('reference_image_urls'),
       })
       .strict()
       .default({}),
+    assets: z.string().trim().min(1).optional(),
+    references: z
+      .object({
+        style: z.string().trim().min(1).optional(),
+        character: z.string().trim().min(1).optional(),
+        images: z.array(z.string().trim().min(1)).default([]),
+      })
+      .strict()
+      .optional(),
     shots: z.array(ShotSchema).min(1, 'Add at least one shot'),
     voiceover: z
       .object({

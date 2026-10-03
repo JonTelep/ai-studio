@@ -72,6 +72,8 @@ Generation writes every take under `work/<project>/` and a `manifest.json`. A la
 
 Image-to-video shots generate a still, then animate it. Text-to-video shots skip the still. For placeholder videos, camera motion is baked into the take. For fal videos, describe the motion in the prompt. Ken Burns and pans in the edit apply to stills.
 
+Reference stills are uploaded with each fal image or video call that generates media. They are sent as `reference_image_urls` unless `models.referenceImageField` names another input. The placeholder provider does not invent a likeness from them. It still checks that the files exist. A global style or character is included on every shot, ahead of that shot's own `reference_images`.
+
 Voice is optional. `voiceover.provider` is `placeholder`, `elevenlabs`, or `auto`. Auto uses ElevenLabs when `ELEVENLABS_API_KEY` is set. ElevenLabs is called with timestamps so captions can follow words. The placeholder lines words up with each shot when the script matches the shot text, and spreads them across the timeline otherwise.
 
 `STUDIO_FORBID_PAID=1` makes every paid provider refuse to run. CI sets it.
@@ -94,9 +96,17 @@ YAML or JSON. See `projects/ocean.yaml` and `projects/meme-example.yaml`. `studi
 | `models.video` | no | fal video endpoint id |
 | `models.voice` | no | ElevenLabs model id |
 | `models.videoImageField` | no | Override the image field sent to the video model |
+| `models.referenceImageField` | no | Where reference stills are sent. Default `reference_image_urls` |
+| `assets` | no | Folder of your own files. Paths below are looked up here first |
+| `references.style` | no | Global style still, sent with every generated shot |
+| `references.character` | no | Global character still, sent with every generated shot |
+| `references.images` | no | More global reference stills |
 | `shots` | yes | At least one |
 | `shots[].id` | yes | Short id, unique |
-| `shots[].prompt` | yes | Image or video prompt |
+| `shots[].prompt` | when generating | Required unless `image` or `video` supplies the finished shot |
+| `shots[].image` | no | Your still. Used as-is, or as the start frame when `kind` is `video` |
+| `shots[].video` | no | Your clip, trimmed to `duration` and fitted to the frame. No model call |
+| `shots[].reference_images` | no | Extra stills for this shot, after the global ones |
 | `shots[].duration` | yes | Seconds, greater than 0 and at most 120 |
 | `shots[].kind` | no | `image` (default) or `video` |
 | `shots[].videoMode` | no | `image-to-video` (default) or `text-to-video` |
@@ -115,6 +125,46 @@ YAML or JSON. See `projects/ocean.yaml` and `projects/meme-example.yaml`. `studi
 | `edit.snapWindowSec` | no | How far a cut may move, default 0.25 |
 
 Validation errors name the field, for example `shots.0.duration: Duration must be greater than 0`.
+
+## Your own media
+
+Put stills and clips in a folder next to the project and point `assets` at it. A path is resolved in that folder, then next to the project file, then in the current directory.
+
+`image` skips image generation. On an image shot the edit uses that still, including Ken Burns. On a video shot it is the start frame for image-to-video, so you pay for the video only. `video` skips generation entirely: the clip is trimmed to the shot duration and fitted to the frame. Set one of those, not both.
+
+`references.style` and `references.character` keep a look or a person consistent across shots. Each shot can add `reference_images`. Those files are passed through on fal calls. See `projects/own-media.yaml`.
+
+```yaml
+title: Brought Media
+aspect: "16:9"
+fps: 30
+provider: placeholder
+assets: assets
+references:
+  style: style.png
+  character: character.png
+shots:
+  - id: photo
+    image: photo.jpg
+    duration: 2
+    camera: ken-burns-in
+    text: Your still
+  - id: animated
+    kind: video
+    image: photo.jpg
+    duration: 2
+    prompt: Slow push across the supplied photo
+    reference_images:
+      - character.png
+  - id: clip
+    video: clip.mp4
+    duration: 2
+    text: Your clip
+```
+
+```bash
+npm run studio -- all projects/own-media.yaml --yes --renderer ffmpeg
+```
 
 Captions come from voiceover word timings when a voiceover exists. Otherwise they come from each shot's `text`. `impact` is bold centered meme type, `clean` is a bottom subtitle, `minimal` is a smaller lower-third. The current word is highlighted.
 
@@ -149,7 +199,7 @@ npm run typecheck
 npm test
 ```
 
-GitHub Actions runs those, then renders both example projects with the placeholder provider and ffmpeg. Do not put real keys in the repo. Do not call paid APIs from CI.
+GitHub Actions runs those, then renders the example projects with the placeholder provider and ffmpeg. Do not put real keys in the repo. Do not call paid APIs from CI.
 
 ## License
 

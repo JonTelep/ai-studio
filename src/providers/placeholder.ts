@@ -80,7 +80,9 @@ export const placeholderMedia: MediaProvider = {
       prompt: input.prompt,
       width: input.width,
       height: input.height,
-      label: 'PLACEHOLDER STILL',
+      label: input.referenceImages?.length
+        ? `PLACEHOLDER STILL · ${input.referenceImages.length} REFS`
+        : 'PLACEHOLDER STILL',
     });
     await rasterize(svg, input.outPath);
   },

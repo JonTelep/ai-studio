@@ -7,6 +7,8 @@ export type GenerateImageInput = {
   height: number;
   aspect: '9:16' | '1:1' | '16:9';
   model: string;
+  referenceImages?: string[];
+  referenceImageField?: string;
   outPath: string;
 };
 
@@ -22,6 +24,8 @@ export type GenerateVideoInput = {
   camera: Camera;
   aspect: '9:16' | '1:1' | '16:9';
   imageField?: string;
+  referenceImages?: string[];
+  referenceImageField?: string;
   outPath: string;
 };
 

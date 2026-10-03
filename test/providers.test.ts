@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { falMedia } from '../src/providers/fal.js';
-import { extractMediaUrl, videoImageField } from '../src/providers/media-url.js';
+import { assignReferenceImages, extractMediaUrl, videoImageField } from '../src/providers/media-url.js';
 import { resolveMediaProvider, resolveVoiceProvider } from '../src/providers/registry.js';
 import { elevenLabsVoice } from '../src/providers/elevenlabs.js';
 import { loadProject } from '../src/project/load.js';
@@ -30,6 +30,16 @@ describe('providers', () => {
     expect(videoImageField('fal-ai/kling-video/v3/pro/image-to-video')).toBe('start_image_url');
     expect(videoImageField('bytedance/seedance-2.0/image-to-video')).toBe('image_url');
     expect(videoImageField('bytedance/seedance-2.0/image-to-video', 'end_image_url')).toBe('end_image_url');
+    const body: Record<string, unknown> = { image_url: 'https://cdn.example/start.png' };
+    assignReferenceImages(body, ['https://cdn.example/style.png', 'https://cdn.example/hero.png']);
+    expect(body.reference_image_urls).toEqual([
+      'https://cdn.example/style.png',
+      'https://cdn.example/hero.png',
+    ]);
+    expect(body.image_url).toBe('https://cdn.example/start.png');
+    const single: Record<string, unknown> = {};
+    assignReferenceImages(single, ['https://cdn.example/only.png'], 'image_url');
+    expect(single.image_url).toBe('https://cdn.example/only.png');
   });
 
   it('stays on the placeholder when the project says so, even with a key', () => {

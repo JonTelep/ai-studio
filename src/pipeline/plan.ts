@@ -9,7 +9,7 @@ import { frameSize } from '../project/dimensions.js';
 import type { LoadedProject } from '../project/load.js';
 import { StudioError } from '../util/ffmpeg.js';
 import { loadManifest, selectedTake, type Manifest } from './manifest.js';
-import { requireAsset } from './paths.js';
+import { requireAsset, resolveAssetsDir } from './paths.js';
 
 function colorFor(prompt: string): string {
   const hash = createHash('sha256').update(prompt).digest();
@@ -25,6 +25,7 @@ function copyIntoPublic(source: string, publicDir: string, publicFile: string): 
 
 export function buildRenderPlan(project: LoadedProject, workDir: string): { plan: RenderPlan; publicDir: string } {
   const manifest = loadManifest(workDir, project.slug);
+  const assetsDir = resolveAssetsDir(project.file, project.assets);
   const publicDir = path.join(workDir, 'public');
   mkdirSync(publicDir, { recursive: true });
   const size = frameSize(project.aspect);
@@ -45,7 +46,7 @@ export function buildRenderPlan(project: LoadedProject, workDir: string): { plan
     if (!entry) {
       throw new StudioError(`Shot "${shot.id}" has not been generated. Run generate first.`);
     }
-    const video = shot.kind === 'video' ? selectedTake(entry, 'video', workDir) : undefined;
+    const video = shot.kind === 'video' || shot.video ? selectedTake(entry, 'video', workDir) : undefined;
     const image = selectedTake(entry, 'image', workDir);
     const take = video ?? image;
     if (!take) {
@@ -65,7 +66,7 @@ export function buildRenderPlan(project: LoadedProject, workDir: string): { plan
       camera: shot.camera,
       applyCamera: take.kind !== 'video',
       text: shot.text,
-      color: colorFor(shot.prompt),
+      color: colorFor(shot.prompt ?? shot.id),
     };
   });
 
@@ -81,13 +82,13 @@ export function buildRenderPlan(project: LoadedProject, workDir: string): { plan
     }
   }
   if (project.music) {
-    const sourcePath = requireAsset(project.file, project.music.file, 'Music file');
+    const sourcePath = requireAsset(project.file, project.music.file, 'Music file', assetsDir);
     const publicFile = `audio/music${path.extname(sourcePath) || '.wav'}`;
     copyIntoPublic(sourcePath, publicDir, publicFile);
     audio.push({ sourcePath, publicFile, start: 0, volume: project.music.volume, role: 'music' });
   }
   project.sfx.forEach((effect, index) => {
-    const sourcePath = requireAsset(project.file, effect.file, 'SFX file');
+    const sourcePath = requireAsset(project.file, effect.file, 'SFX file', assetsDir);
     const publicFile = `audio/sfx-${index}${path.extname(sourcePath) || '.wav'}`;
     copyIntoPublic(sourcePath, publicDir, publicFile);
     audio.push({ sourcePath, publicFile, start: effect.at, volume: effect.volume, role: 'sfx' });

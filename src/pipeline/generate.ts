@@ -22,7 +22,10 @@ import {
   type Manifest,
   type Take,
 } from './manifest.js';
-import { requireAsset } from './paths.js';
+import { fitStill, trimClip } from './import-media.js';
+import { fileStamp, requireAsset, resolveAssetsDir } from './paths.js';
+import { collectReferenceFiles } from './references.js';
+import { planShotMedia } from './shot-media.js';
 
 export type GenerateOptions = {
   projectPath: string;
@@ -42,13 +45,21 @@ export type GenerateResult = {
   manifest: Manifest;
 };
 
-function imageHash(shot: Shot, provider: string, model: string, width: number, height: number): string {
+function imageHash(
+  shot: Shot,
+  provider: string,
+  model: string,
+  width: number,
+  height: number,
+  references: string[],
+): string {
   return sha256({
-    prompt: shot.prompt,
+    prompt: shot.prompt ?? '',
     provider,
     model,
     width,
     height,
+    references,
   });
 }
 
@@ -59,17 +70,37 @@ function videoHash(
   width: number,
   height: number,
   fps: number,
+  references: string[],
+  imageStamp: string | null,
 ): string {
   return sha256({
-    prompt: shot.prompt,
+    prompt: shot.prompt ?? '',
     provider,
     model,
     width,
     height,
     fps,
     duration: shot.duration,
-    mode: shot.videoMode ?? 'image-to-video',
+    mode: shot.image ? 'image-to-video' : (shot.videoMode ?? 'image-to-video'),
     camera: provider === 'placeholder' ? shot.camera : null,
+    references,
+    imageStamp,
+  });
+}
+
+function suppliedImageHash(file: string, width: number, height: number): string {
+  return sha256({ source: 'file', kind: 'image', stamp: fileStamp(file), width, height });
+}
+
+function suppliedVideoHash(file: string, shot: Shot, width: number, height: number, fps: number): string {
+  return sha256({
+    source: 'file',
+    kind: 'video',
+    stamp: fileStamp(file),
+    duration: shot.duration,
+    width,
+    height,
+    fps,
   });
 }
 
@@ -106,26 +137,29 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
   const media = resolveMediaProvider(project);
   const voice = resolveVoiceProvider(project);
   const size = frameSize(project.aspect);
+  const assetsDir = resolveAssetsDir(project.file, project.assets);
   const cache = emptyCache(project);
+  const shotFiles = new Map<string, { image?: string; video?: string }>();
 
   for (const shot of project.shots) {
+    const imageFile = shot.image ? requireAsset(project.file, shot.image, `Image for shot "${shot.id}"`, assetsDir) : undefined;
+    const videoFile = shot.video ? requireAsset(project.file, shot.video, `Video for shot "${shot.id}"`, assetsDir) : undefined;
+    const references = collectReferenceFiles(project, shot, assetsDir).map(fileStamp);
+    shotFiles.set(shot.id, { image: imageFile, video: videoFile });
     const entry = shotEntry(manifest, shot.id);
-    const mode = shot.videoMode ?? 'image-to-video';
-    if (!options.fresh && (shot.kind === 'image' || (shot.kind === 'video' && mode !== 'text-to-video'))) {
-      cache.images[shot.id] = Boolean(
-        reusableTake(entry.takes, entry.selected.image, 'image', imageHash(shot, media.id, project.models.image, size.width, size.height), workDir),
-      );
+    const mediaPlan = planShotMedia(shot);
+    if (!options.fresh && (mediaPlan.generateImage || mediaPlan.source === 'image')) {
+      const hash = mediaPlan.generateImage
+        ? imageHash(shot, media.id, project.models.image, size.width, size.height, references)
+        : suppliedImageHash(imageFile as string, size.width, size.height);
+      cache.images[shot.id] = Boolean(reusableTake(entry.takes, entry.selected.image, 'image', hash, workDir));
     }
-    if (!options.fresh && shot.kind === 'video') {
-      cache.videos[shot.id] = Boolean(
-        reusableTake(
-          entry.takes,
-          entry.selected.video,
-          'video',
-          videoHash(shot, media.id, project.models.video, size.width, size.height, project.fps),
-          workDir,
-        ),
-      );
+    if (!options.fresh && (mediaPlan.generateVideo || mediaPlan.source === 'video')) {
+      const imageStamp = imageFile ? fileStamp(imageFile) : null;
+      const hash = mediaPlan.generateVideo
+        ? videoHash(shot, media.id, project.models.video, size.width, size.height, project.fps, references, imageStamp)
+        : suppliedVideoHash(videoFile as string, shot, size.width, size.height, project.fps);
+      cache.videos[shot.id] = Boolean(reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir));
     }
   }
   if (!options.fresh && project.voiceover && voice) {
@@ -156,7 +190,19 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
 
   mkdirSync(workDir, { recursive: true });
   for (const shot of project.shots) {
-    await generateShot({ project, shot, media, manifest, workDir, fresh: options.fresh, size });
+    const files = shotFiles.get(shot.id);
+    await generateShot({
+      project,
+      shot,
+      media,
+      manifest,
+      workDir,
+      fresh: options.fresh,
+      size,
+      assetsDir,
+      imageFile: files?.image,
+      videoFile: files?.video,
+    });
     saveManifest(workDir, manifest);
   }
   if (project.voiceover && voice) {
@@ -164,7 +210,7 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     saveManifest(workDir, manifest);
   }
   if (project.music) {
-    const musicFile = requireAsset(project.file, project.music.file, 'Music file');
+    const musicFile = requireAsset(project.file, project.music.file, 'Music file', assetsDir);
     const outFile = path.join(workDir, 'analysis', 'music.json');
     console.log(`Analyzing music (${options.analyzer})…`);
     await analyzeMusicFile(musicFile, outFile, options.analyzer);
@@ -172,7 +218,7 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     saveManifest(workDir, manifest);
   }
   for (const effect of project.sfx) {
-    requireAsset(project.file, effect.file, 'SFX file');
+    requireAsset(project.file, effect.file, 'SFX file', assetsDir);
   }
   console.log(`Manifest: ${path.join(workDir, 'manifest.json')}`);
   return { project, estimate, workDir, manifest };
@@ -186,14 +232,49 @@ async function generateShot(input: {
   workDir: string;
   fresh: boolean;
   size: { width: number; height: number };
+  assetsDir?: string;
+  imageFile?: string;
+  videoFile?: string;
 }): Promise<void> {
-  const { project, shot, media, manifest, workDir, fresh, size } = input;
+  const { project, shot, media, manifest, workDir, fresh, size, assetsDir, imageFile, videoFile } = input;
   const entry = shotEntry(manifest, shot.id);
-  const mode = shot.videoMode ?? 'image-to-video';
-  const needsImage = shot.kind === 'image' || (shot.kind === 'video' && mode !== 'text-to-video');
+  const mediaPlan = planShotMedia(shot);
+  const referenceFiles = collectReferenceFiles(project, shot, assetsDir);
+  const referenceStamps = referenceFiles.map(fileStamp);
   let imageTake: Take | undefined;
-  if (needsImage) {
-    const hash = imageHash(shot, media.id, project.models.image, size.width, size.height);
+
+  if (mediaPlan.source === 'video' && videoFile) {
+    const hash = suppliedVideoHash(videoFile, shot, size.width, size.height, project.fps);
+    const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
+    if (cached) {
+      console.log(`video ${shot.id} cached (${cached.id})`);
+      entry.selected.video = cached.id;
+      return;
+    }
+    const id = nextTakeId(entry.takes, 'video');
+    const relative = path.join('shots', shot.id, `${id}.mp4`);
+    console.log(`video ${shot.id} using ${shot.video} (trimmed to ${shot.duration}s)`);
+    await trimClip(videoFile, path.join(workDir, relative), shot.duration, project.fps, size.width, size.height);
+    addTake(entry, suppliedTake(id, 'video', hash, relative));
+    return;
+  }
+
+  if (mediaPlan.source === 'image' && imageFile) {
+    const hash = suppliedImageHash(imageFile, size.width, size.height);
+    imageTake = fresh ? undefined : reusableTake(entry.takes, entry.selected.image, 'image', hash, workDir);
+    if (imageTake) {
+      console.log(`image ${shot.id} cached (${imageTake.id})`);
+      entry.selected.image = imageTake.id;
+    } else {
+      const id = nextTakeId(entry.takes, 'image');
+      const relative = path.join('shots', shot.id, `${id}.png`);
+      console.log(`image ${shot.id} using ${shot.image}`);
+      await fitStill(imageFile, path.join(workDir, relative), size.width, size.height);
+      imageTake = suppliedTake(id, 'image', hash, relative);
+      addTake(entry, imageTake);
+    }
+  } else if (mediaPlan.generateImage) {
+    const hash = imageHash(shot, media.id, project.models.image, size.width, size.height, referenceStamps);
     imageTake = fresh ? undefined : reusableTake(entry.takes, entry.selected.image, 'image', hash, workDir);
     if (imageTake) {
       console.log(`image ${shot.id} cached (${imageTake.id})`);
@@ -203,12 +284,15 @@ async function generateShot(input: {
       const relative = path.join('shots', shot.id, `${id}.png`);
       const outPath = path.join(workDir, relative);
       console.log(`image ${shot.id} generating (${media.id}, ${project.models.image})…`);
+      if (referenceFiles.length) console.log(`  references: ${referenceFiles.map((file) => path.basename(file)).join(', ')}`);
       await media.generateImage({
-        prompt: shot.prompt,
+        prompt: shot.prompt ?? '',
         width: size.width,
         height: size.height,
         aspect: project.aspect,
         model: project.models.image,
+        referenceImages: referenceFiles,
+        referenceImageField: project.models.referenceImageField,
         outPath,
       });
       imageTake = {
@@ -225,43 +309,68 @@ async function generateShot(input: {
     }
   }
 
-  if (shot.kind === 'video') {
-    const hash = videoHash(shot, media.id, project.models.video, size.width, size.height, project.fps);
-    const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
-    if (cached) {
-      console.log(`video ${shot.id} cached (${cached.id})`);
-      entry.selected.video = cached.id;
-      return;
-    }
-    const id = nextTakeId(entry.takes, 'video');
-    const relative = path.join('shots', shot.id, `${id}.mp4`);
-    const outPath = path.join(workDir, relative);
-    console.log(`video ${shot.id} generating (${media.id}, ${project.models.video})…`);
-    await media.generateVideo({
-      prompt: shot.prompt,
-      width: size.width,
-      height: size.height,
-      durationSec: shot.duration,
-      fps: project.fps,
-      model: project.models.video,
-      mode,
-      imagePath: imageTake ? path.join(workDir, imageTake.path) : undefined,
-      camera: shot.camera,
-      aspect: project.aspect,
-      imageField: project.models.videoImageField,
-      outPath,
-    });
-    addTake(entry, {
-      id,
-      kind: 'video',
-      inputHash: hash,
-      provider: media.id,
-      model: project.models.video,
-      path: relative,
-      createdAt: new Date().toISOString(),
-      status: 'done',
-    });
+  if (!mediaPlan.generateVideo) return;
+  const imageStamp = imageFile ? fileStamp(imageFile) : null;
+  const hash = videoHash(
+    shot,
+    media.id,
+    project.models.video,
+    size.width,
+    size.height,
+    project.fps,
+    referenceStamps,
+    imageStamp,
+  );
+  const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
+  if (cached) {
+    console.log(`video ${shot.id} cached (${cached.id})`);
+    entry.selected.video = cached.id;
+    return;
   }
+  const id = nextTakeId(entry.takes, 'video');
+  const relative = path.join('shots', shot.id, `${id}.mp4`);
+  const outPath = path.join(workDir, relative);
+  console.log(`video ${shot.id} generating (${media.id}, ${project.models.video})…`);
+  if (referenceFiles.length) console.log(`  references: ${referenceFiles.map((file) => path.basename(file)).join(', ')}`);
+  await media.generateVideo({
+    prompt: shot.prompt ?? '',
+    width: size.width,
+    height: size.height,
+    durationSec: shot.duration,
+    fps: project.fps,
+    model: project.models.video,
+    mode: imageTake ? 'image-to-video' : (shot.videoMode ?? 'image-to-video'),
+    imagePath: imageTake ? path.join(workDir, imageTake.path) : undefined,
+    camera: shot.camera,
+    aspect: project.aspect,
+    imageField: project.models.videoImageField,
+    referenceImages: referenceFiles,
+    referenceImageField: project.models.referenceImageField,
+    outPath,
+  });
+  addTake(entry, {
+    id,
+    kind: 'video',
+    inputHash: hash,
+    provider: media.id,
+    model: project.models.video,
+    path: relative,
+    createdAt: new Date().toISOString(),
+    status: 'done',
+  });
+}
+
+function suppliedTake(id: string, kind: 'image' | 'video', hash: string, relative: string): Take {
+  return {
+    id,
+    kind,
+    inputHash: hash,
+    provider: 'file',
+    model: 'supplied',
+    path: relative,
+    createdAt: new Date().toISOString(),
+    status: 'done',
+  };
 }
 
 async function generateVoice(input: {

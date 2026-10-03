@@ -103,6 +103,58 @@ shots:
     ).toThrow(/mood/);
   });
 
+  it('accepts supplied media and rejects a shot that would generate without a prompt', () => {
+    const supplied = loadProject(
+      writeProject(`
+title: Supplied
+aspect: "16:9"
+assets: assets
+references:
+  style: style.png
+  character: hero.png
+shots:
+  - id: still
+    image: photo.jpg
+    duration: 1
+  - id: clip
+    video: clip.mp4
+    duration: 1
+`),
+    );
+    expect(supplied.assets).toBe('assets');
+    expect(supplied.references?.style).toBe('style.png');
+    expect(supplied.shots[0].kind).toBe('image');
+    expect(supplied.shots[0].prompt).toBeUndefined();
+    expect(supplied.shots[1].kind).toBe('video');
+    expect(supplied.shots[1].video).toBe('clip.mp4');
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: Needs prompt
+aspect: "1:1"
+shots:
+  - id: one
+    duration: 1
+`),
+      ),
+    ).toThrow(/Prompt is required/);
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: Both
+aspect: "1:1"
+shots:
+  - id: one
+    image: a.jpg
+    video: b.mp4
+    duration: 1
+`),
+      ),
+    ).toThrow(/not both/);
+  });
+
   it('loads the checked-in examples', () => {
     const ocean = loadProject('projects/ocean.yaml');
     const meme = loadProject('projects/meme-example.yaml');
@@ -113,5 +165,10 @@ shots:
     expect(meme.voiceover?.script).toMatch(/email/);
     expect(meme.edit.snapCutsToBeats).toBe(true);
     expect(meme.music?.file).toContain('meme-beat.wav');
+    const own = loadProject('projects/own-media.yaml');
+    expect(own.assets).toBe('assets');
+    expect(own.references?.character).toBe('character.png');
+    expect(own.shots.map((shot) => shot.id)).toEqual(['photo', 'animated', 'clip']);
+    expect(own.shots[2].kind).toBe('video');
   });
 });
