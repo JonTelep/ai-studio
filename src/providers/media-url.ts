@@ -29,6 +29,29 @@ export function videoImageField(model: string, override?: string): string {
   return 'image_url';
 }
 
+/** Default fal input for a last frame. Kling variants that say tail_image_url can override it. */
+export function videoEndImageField(override?: string): string {
+  return override?.trim() || 'end_image_url';
+}
+
+/**
+ * Set the end-frame URL. The field must differ from the start-frame field so the
+ * start still is not replaced. Call this after reference images are assigned.
+ */
+export function assignEndImage(
+  body: Record<string, unknown>,
+  url: string,
+  field = 'end_image_url',
+  startField?: string,
+): void {
+  if (startField && field === startField) {
+    throw new Error(
+      `End image field "${field}" is the same as the start image field. Set models.endImageField to a different input, such as end_image_url or tail_image_url.`,
+    );
+  }
+  body[field] = url;
+}
+
 /**
  * Attach reference stills without replacing a start frame that already uses the same key.
  * A single-url field (`image_url`) gets one string. List fields get the whole array.

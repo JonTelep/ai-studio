@@ -56,7 +56,7 @@ function printTakes(projectPath: string): void {
       continue;
     }
     for (const take of entry.takes) {
-      const selected = entry.selected[take.kind as 'image' | 'video'] === take.id ? '*' : ' ';
+      const selected = entry.selected[take.kind as 'image' | 'video' | 'end'] === take.id ? '*' : ' ';
       lines.push(`${selected} ${shotId}  ${take.id}  ${take.provider}  ${take.path}`);
     }
   }

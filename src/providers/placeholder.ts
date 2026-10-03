@@ -102,12 +102,49 @@ export const placeholderMedia: MediaProvider = {
       );
     }
     const frames = Math.max(1, Math.round(input.durationSec * input.fps));
+    mkdirSync(path.dirname(input.outPath), { recursive: true });
+    if (input.endImagePath) {
+      if (!input.imagePath) throw new Error('A first-and-last-frame shot needs a start still.');
+      const duration = Math.max(input.durationSec, 1 / input.fps).toFixed(3);
+      const fit = `scale=${input.width}:${input.height}:force_original_aspect_ratio=increase,crop=${input.width}:${input.height},fps=${input.fps},format=rgba`;
+      const blend = `blend=all_expr='A*(1-min(T/${duration}\\,1))+B*min(T/${duration}\\,1)':shortest=1`;
+      await runFfmpeg([
+        '-loop',
+        '1',
+        '-framerate',
+        String(input.fps),
+        '-t',
+        duration,
+        '-i',
+        input.imagePath,
+        '-loop',
+        '1',
+        '-framerate',
+        String(input.fps),
+        '-t',
+        duration,
+        '-i',
+        input.endImagePath,
+        '-filter_complex',
+        `[0:v]${fit}[a];[1:v]${fit}[b];[a][b]${blend}`,
+        '-t',
+        duration,
+        '-r',
+        String(input.fps),
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-an',
+        input.outPath,
+      ]);
+      return;
+    }
     const motion = zoompan(input.camera, frames, input.width, input.height).replace(
       ':fps=30',
       `:fps=${input.fps}`,
     );
     const filter = `scale=${input.width * 2}:${input.height * 2},${motion}`;
-    mkdirSync(path.dirname(input.outPath), { recursive: true });
     await runFfmpeg([
       '-loop',
       '1',

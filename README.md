@@ -67,10 +67,10 @@ Generation writes every take under `work/<project>/` and a `manifest.json`. A la
 `provider` on the project is `placeholder`, `fal`, or `auto`.
 
 - **placeholder** draws gradient stills with the prompt on them, turns video shots into short moves, and synthesizes a quiet tone plus even word timings. It never opens a network connection.
-- **fal** calls fal.ai for stills and video. The default still model is `fal-ai/flux/dev`. The default video model is `bytedance/seedance-2.0/image-to-video`. Kling image-to-video is `fal-ai/kling-video/v3/pro/image-to-video` (it reads `start_image_url` instead of `image_url`). Set the ids in the project or in `studio.config.yaml`. The catalog changes.
+- **fal** calls fal.ai for stills and video. The default still model is `fal-ai/flux/dev`. The default video model is `bytedance/seedance-2.0/image-to-video`. Kling image-to-video is `fal-ai/kling-video/v3/pro/image-to-video` (it reads `start_image_url` instead of `image_url`). A first-and-last-frame shot also uploads the end still. Seedance and Kling v3 read `end_image_url`. Older Kling variants call that input `tail_image_url`; set `models.endImageField` when the model expects a different name. Set the ids in the project or in `studio.config.yaml`. The catalog changes.
 - **auto** uses fal when `FAL_KEY` is set, otherwise the placeholder.
 
-Image-to-video shots generate a still, then animate it. Text-to-video shots skip the still. For placeholder videos, camera motion is baked into the take. For fal videos, describe the motion in the prompt. Ken Burns and pans in the edit apply to stills.
+Image-to-video shots generate a still, then animate it. Text-to-video shots skip the still. A shot with `end_image` or `start_from: previous` sends both a start frame and an end frame, and the video model generates the motion between them. The placeholder provider crossfades those two stills, so the bridge is visible with no key. For other placeholder videos, camera motion is baked into the take. For fal videos, describe the motion in the prompt. Ken Burns and pans in the edit apply to stills.
 
 Reference stills are uploaded with each fal image or video call that generates media. They are sent as `reference_image_urls` unless `models.referenceImageField` names another input. The placeholder provider does not invent a likeness from them. It still checks that the files exist. A global style or character is included on every shot, ahead of that shot's own `reference_images`.
 
@@ -95,7 +95,8 @@ YAML or JSON. See `projects/ocean.yaml` and `projects/meme-example.yaml`. `studi
 | `models.image` | no | fal image endpoint id |
 | `models.video` | no | fal video endpoint id |
 | `models.voice` | no | ElevenLabs model id |
-| `models.videoImageField` | no | Override the image field sent to the video model |
+| `models.videoImageField` | no | Override the start-frame field sent to the video model |
+| `models.endImageField` | no | Where the end frame is sent. Default `end_image_url`. Use `tail_image_url` when the model asks for a tail image |
 | `models.referenceImageField` | no | Where reference stills are sent. Default `reference_image_urls` |
 | `assets` | no | Folder of your own files. Paths below are looked up here first |
 | `references.style` | no | Global style still, sent with every generated shot |
@@ -103,8 +104,11 @@ YAML or JSON. See `projects/ocean.yaml` and `projects/meme-example.yaml`. `studi
 | `references.images` | no | More global reference stills |
 | `shots` | yes | At least one |
 | `shots[].id` | yes | Short id, unique |
-| `shots[].prompt` | when generating | Required unless `image` or `video` supplies the finished shot |
-| `shots[].image` | no | Your still. Used as-is, or as the start frame when `kind` is `video` |
+| `shots[].prompt` | when generating motion | Required for generated motion. A supplied still or clip can omit it. A generated frame can carry its own prompt |
+| `shots[].image` | no | Your still. Used as-is, or as the start frame when `kind` is `video` or `end_image` is set |
+| `shots[].start_image` | no | Start frame. A path, or `{ prompt }` to generate one. Same role as `image` |
+| `shots[].end_image` | no | End frame. A path, or `{ prompt }` to generate one. The video is the motion from the start frame to this still |
+| `shots[].start_from` | no | `previous` uses the previous shot's last frame as `start_image` |
 | `shots[].video` | no | Your clip, trimmed to `duration` and fitted to the frame. No model call |
 | `shots[].reference_images` | no | Extra stills for this shot, after the global ones |
 | `shots[].duration` | yes | Seconds, greater than 0 and at most 120 |
@@ -164,6 +168,47 @@ shots:
 
 ```bash
 npm run studio -- all projects/own-media.yaml --yes --renderer ffmpeg
+```
+
+## First and last frame
+
+A video model that accepts a start frame and an end frame can fill in the motion between two pictures. `start_image` and `end_image` are each either a path or `{ prompt: ... }` when the still itself should be generated. `image` is the shorthand for a start frame you already have. `start_from: previous` uses the previous shot's last frame, so a sequence of photos plays as one continuous story. The first shot cannot use `previous`.
+
+`projects/bridge.yaml` is photo A, a generated transition into photo B, then photo B:
+
+```yaml
+shots:
+  - id: photo-a
+    image: photo.jpg
+    duration: 1.5
+    text: Photo A
+  - id: crossing
+    start_from: previous
+    end_image: photo-b.jpg
+    duration: 2
+    prompt: The camera travels from the first photo into the second, one continuous move
+  - id: photo-b
+    image: photo-b.jpg
+    duration: 1.5
+    text: Photo B
+```
+
+On fal, that crossing calls the video model with the start still and `end_image_url` (or `models.endImageField`). Seedance 2.0 and Kling v3 (`fal-ai/kling-video/v3/pro/image-to-video`, start field `start_image_url`) both accept `end_image_url`. The placeholder crossfades the two stills. Photo A and photo B are not billed. The previous frame is not billed again. Only the transition video is a paid call, plus any frame you asked the image model to generate.
+
+Frames can be generated instead of supplied:
+
+```yaml
+  - id: dawn-to-dusk
+    start_image:
+      prompt: A quiet harbor at dawn, same boat
+    end_image:
+      prompt: The same harbor at dusk, lights on
+    prompt: Time passes in one slow move
+    duration: 4
+```
+
+```bash
+npm run studio -- all projects/bridge.yaml --yes --renderer ffmpeg
 ```
 
 Captions come from voiceover word timings when a voiceover exists. Otherwise they come from each shot's `text`. `impact` is bold centered meme type, `clean` is a bottom subtitle, `minimal` is a smaller lower-third. The current word is highlighted.

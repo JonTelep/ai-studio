@@ -56,4 +56,18 @@ describe('estimate', () => {
     expect(estimate.supplied).toBe(3);
     expect(estimate.paid).toBe(1);
   });
+
+  it('bills the transition and generated frames, and skips the previous frame', () => {
+    const project = loadProject('projects/bridge.yaml');
+    const estimate = estimateFromCache(project, emptyCache(project), {
+      mediaPaid: true,
+      voicePaid: false,
+      mediaProvider: 'fal',
+      voiceProvider: null,
+    });
+    expect(estimate.images).toBe(0);
+    expect(estimate.videos).toBe(1);
+    expect(estimate.supplied).toBe(3);
+    expect(estimate.paid).toBe(1);
+  });
 });

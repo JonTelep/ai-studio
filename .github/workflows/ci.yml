@@ -31,6 +31,8 @@ jobs:
           npm run studio -- all projects/ocean.yaml --yes --renderer ffmpeg
           npm run studio -- all projects/meme-example.yaml --yes --renderer ffmpeg
           npm run studio -- all projects/own-media.yaml --yes --renderer ffmpeg
+          npm run studio -- all projects/bridge.yaml --yes --renderer ffmpeg
           test -s work/ocean/output.mp4
           test -s work/meme-example/output.mp4
           test -s work/own-media/output.mp4
+          test -s work/bridge/output.mp4

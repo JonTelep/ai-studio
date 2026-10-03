@@ -2,7 +2,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { assertPaidAllowed } from '../env.js';
-import { assignReferenceImages, extractMediaUrl, fluxImageSize, videoImageField } from './media-url.js';
+import {
+  assignEndImage,
+  assignReferenceImages,
+  extractMediaUrl,
+  fluxImageSize,
+  videoEndImageField,
+  videoImageField,
+} from './media-url.js';
 import type { GenerateImageInput, GenerateVideoInput, MediaProvider } from './types.js';
 
 type FalClient = {
@@ -75,12 +82,18 @@ export const falMedia: MediaProvider = {
       duration: String(Math.min(15, Math.max(3, Math.round(input.durationSec)))),
       aspect_ratio: input.aspect,
     };
+    const startField =
+      input.mode === 'image-to-video' ? videoImageField(input.model, input.imageField) : undefined;
     if (input.mode === 'image-to-video') {
       if (!input.imagePath) throw new Error('Image-to-video needs a still first.');
-      body[videoImageField(input.model, input.imageField)] = await uploadLocal(fal, input.imagePath);
+      body[startField as string] = await uploadLocal(fal, input.imagePath);
     }
     const referenceUrls = await Promise.all((input.referenceImages ?? []).map((file) => uploadLocal(fal, file)));
     assignReferenceImages(body, referenceUrls, input.referenceImageField);
+    if (input.endImagePath) {
+      const endField = videoEndImageField(input.endImageField);
+      assignEndImage(body, await uploadLocal(fal, input.endImagePath), endField, startField);
+    }
     const result = await fal.subscribe(input.model, { input: body, logs: false });
     await download(extractMediaUrl(payloadData(result)), input.outPath);
   },

@@ -15,6 +15,12 @@ export async function fitStill(source: string, outPath: string, width: number, h
   ]);
 }
 
+/** One frame from the end of a clip, used as the next shot's start when start_from is previous. */
+export async function extractLastFrame(source: string, outPath: string): Promise<void> {
+  mkdirSync(path.dirname(outPath), { recursive: true });
+  await runFfmpeg(['-sseof', '-0.1', '-i', source, '-frames:v', '1', outPath]);
+}
+
 /** Trim or hold a supplied clip to the shot length and fit it to the frame. No model is called. */
 export async function trimClip(
   source: string,

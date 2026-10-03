@@ -33,6 +33,7 @@ describe('project schema', () => {
     expect(project.shots[0].camera).toBe('ken-burns-in');
     expect(project.captions.style).toBe('clean');
     expect(project.models.image).toContain('flux');
+    expect(project.models.endImageField).toBe('end_image_url');
   });
 
   it('accepts JSON', () => {
@@ -170,5 +171,101 @@ shots:
     expect(own.references?.character).toBe('character.png');
     expect(own.shots.map((shot) => shot.id)).toEqual(['photo', 'animated', 'clip']);
     expect(own.shots[2].kind).toBe('video');
+    const bridge = loadProject('projects/bridge.yaml');
+    expect(bridge.shots.map((shot) => shot.id)).toEqual(['photo-a', 'crossing', 'photo-b']);
+    expect(bridge.shots[1].kind).toBe('video');
+    expect(bridge.shots[1].start_from).toBe('previous');
+    expect(bridge.shots[1].end_image).toBe('photo-b.jpg');
+    expect(bridge.models.endImageField).toBe('end_image_url');
+  });
+
+  it('accepts first and last frames and rejects impossible combinations', () => {
+    const generated = loadProject(
+      writeProject(`
+title: Frames
+aspect: "1:1"
+shots:
+  - id: dawn
+    start_image:
+      prompt: A quiet harbor at dawn
+    duration: 1
+`),
+    );
+    expect(generated.shots[0].kind).toBe('image');
+    expect(generated.shots[0].prompt).toBeUndefined();
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: First
+aspect: "1:1"
+shots:
+  - id: one
+    start_from: previous
+    end_image: b.jpg
+    prompt: move
+    duration: 1
+`),
+      ),
+    ).toThrow(/earlier shot/);
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: Both starts
+aspect: "1:1"
+shots:
+  - id: one
+    image: a.jpg
+    start_image: b.jpg
+    duration: 1
+`),
+      ),
+    ).toThrow(/not both/);
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: Clip
+aspect: "1:1"
+shots:
+  - id: one
+    video: clip.mp4
+    end_image: b.jpg
+    duration: 1
+`),
+      ),
+    ).toThrow(/as-is/);
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: No start
+aspect: "1:1"
+shots:
+  - id: one
+    end_image: b.jpg
+    prompt: move
+    duration: 1
+`),
+      ),
+    ).toThrow(/needs a start frame/);
+
+    expect(() =>
+      loadProject(
+        writeProject(`
+title: Motion
+aspect: "1:1"
+shots:
+  - id: one
+    image: a.jpg
+    duration: 1
+  - id: two
+    start_from: previous
+    end_image: b.jpg
+    duration: 1
+`),
+      ),
+    ).toThrow(/motion/);
   });
 });

@@ -3,6 +3,8 @@ import { planShotMedia } from './shot-media.js';
 
 export type CacheFlags = {
   images: Record<string, boolean>;
+  /** End-frame stills for first-and-last-frame shots. */
+  ends: Record<string, boolean>;
   videos: Record<string, boolean>;
   voice: boolean;
 };
@@ -19,9 +21,11 @@ export type Estimate = {
 };
 
 export function emptyCache(project: Project): CacheFlags {
+  const flags = Object.fromEntries(project.shots.map((shot) => [shot.id, false]));
   return {
-    images: Object.fromEntries(project.shots.map((shot) => [shot.id, false])),
-    videos: Object.fromEntries(project.shots.map((shot) => [shot.id, false])),
+    images: { ...flags },
+    ends: { ...flags },
+    videos: { ...flags },
     voice: false,
   };
 }
@@ -37,11 +41,26 @@ export function estimateFromCache(
   let supplied = 0;
   for (const shot of project.shots) {
     const plan = planShotMedia(shot);
-    if (plan.generateImage) {
+    if (plan.start) {
+      if (plan.start.type === 'generate') {
+        if (cache.images[shot.id]) cached += 1;
+        else images += 1;
+      } else if (plan.start.type === 'file') {
+        if (cache.images[shot.id]) cached += 1;
+        else supplied += 1;
+      }
+    } else if (plan.generateImage) {
       if (cache.images[shot.id]) cached += 1;
       else images += 1;
     } else if (plan.source === 'image') {
       if (cache.images[shot.id]) cached += 1;
+      else supplied += 1;
+    }
+    if (plan.end?.type === 'generate') {
+      if (cache.ends[shot.id]) cached += 1;
+      else images += 1;
+    } else if (plan.end?.type === 'file') {
+      if (cache.ends[shot.id]) cached += 1;
       else supplied += 1;
     }
     if (plan.generateVideo) {

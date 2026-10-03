@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { StudioError } from '../util/ffmpeg.js';
 
-export type TakeKind = 'image' | 'video' | 'voice';
+export type TakeKind = 'image' | 'video' | 'end' | 'voice';
 
 export type Take = {
   id: string;
@@ -16,8 +16,10 @@ export type Take = {
 };
 
 export type ShotEntry = {
-  selected: Partial<Record<'image' | 'video', string>>;
+  selected: Partial<Record<'image' | 'video' | 'end', string>>;
   takes: Take[];
+  /** Path relative to the work dir. The next shot can start from this frame. */
+  lastFrame?: string;
 };
 
 export type VoiceEntry = {
@@ -97,7 +99,7 @@ export function nextTakeId(takes: Take[], kind: TakeKind): string {
 
 export function addTake(entry: { takes: Take[]; selected?: Partial<Record<string, string>> }, take: Take): void {
   entry.takes.push(take);
-  if (entry.selected && (take.kind === 'image' || take.kind === 'video')) {
+  if (entry.selected && (take.kind === 'image' || take.kind === 'video' || take.kind === 'end')) {
     entry.selected[take.kind] = take.id;
   }
 }
@@ -112,7 +114,7 @@ export function selectTake(manifest: Manifest, shotId: string, takeId: string): 
   if (!shot) throw new StudioError(`Shot "${shotId}" is not in the manifest.`);
   const take = shot.takes.find((item) => item.id === takeId);
   if (!take) throw new StudioError(`Take "${takeId}" was not found on shot "${shotId}".`);
-  if (take.kind !== 'image' && take.kind !== 'video') {
+  if (take.kind !== 'image' && take.kind !== 'video' && take.kind !== 'end') {
     throw new StudioError(`Take "${takeId}" is not a visual take.`);
   }
   return {
@@ -127,7 +129,7 @@ export function selectTake(manifest: Manifest, shotId: string, takeId: string): 
   };
 }
 
-export function selectedTake(entry: ShotEntry, kind: 'image' | 'video', workDir: string): Take | undefined {
+export function selectedTake(entry: ShotEntry, kind: 'image' | 'video' | 'end', workDir: string): Take | undefined {
   const selected = entry.takes.find((take) => take.id === entry.selected[kind] && take.kind === kind);
   if (selected && existsSync(path.join(workDir, selected.path))) return selected;
   const fallback = [...entry.takes]

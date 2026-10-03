@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { WordTimingFile } from '../model/types.js';
 import { analyzeMusicFile } from '../audio/analyze.js';
@@ -7,7 +7,7 @@ import { runCommand, StudioError } from '../util/ffmpeg.js';
 import { sha256 } from '../util/hash.js';
 import { frameSize } from '../project/dimensions.js';
 import { loadProject, projectDuration, type LoadedProject } from '../project/load.js';
-import type { Shot } from '../project/schema.js';
+import { framePath, framePrompt, type Shot } from '../project/schema.js';
 import { resolveMediaProvider, resolveVoiceProvider } from '../providers/registry.js';
 import type { MediaProvider, VoiceProvider } from '../providers/types.js';
 import { confirmPaid } from './confirm.js';
@@ -18,14 +18,16 @@ import {
   nextTakeId,
   reusableTake,
   saveManifest,
+  selectedTake,
   shotEntry,
   type Manifest,
+  type ShotEntry,
   type Take,
 } from './manifest.js';
-import { fitStill, trimClip } from './import-media.js';
+import { extractLastFrame, fitStill, trimClip } from './import-media.js';
+import { planShotMedia, type ShotMediaPlan } from './shot-media.js';
 import { fileStamp, requireAsset, resolveAssetsDir } from './paths.js';
 import { collectReferenceFiles } from './references.js';
-import { planShotMedia } from './shot-media.js';
 
 export type GenerateOptions = {
   projectPath: string;
@@ -72,6 +74,7 @@ function videoHash(
   fps: number,
   references: string[],
   imageStamp: string | null,
+  endStamp: string | null,
 ): string {
   return sha256({
     prompt: shot.prompt ?? '',
@@ -81,15 +84,123 @@ function videoHash(
     height,
     fps,
     duration: shot.duration,
-    mode: shot.image ? 'image-to-video' : (shot.videoMode ?? 'image-to-video'),
-    camera: provider === 'placeholder' ? shot.camera : null,
+    mode:
+      shot.image || shot.start_image || shot.start_from || shot.end_image
+        ? 'image-to-video'
+        : (shot.videoMode ?? 'image-to-video'),
+    camera: provider === 'placeholder' && !shot.end_image ? shot.camera : null,
     references,
     imageStamp,
+    endStamp,
+    startPrompt: framePrompt(shot.start_image) ?? null,
+    endPrompt: framePrompt(shot.end_image) ?? null,
   });
 }
 
-function suppliedImageHash(file: string, width: number, height: number): string {
-  return sha256({ source: 'file', kind: 'image', stamp: fileStamp(file), width, height });
+function suppliedImageHash(
+  file: string,
+  width: number,
+  height: number,
+  role: 'still' | 'start' | 'end' = 'still',
+): string {
+  return sha256({ source: 'file', kind: 'image', role, stamp: fileStamp(file), width, height });
+}
+
+function frameImageHash(
+  prompt: string,
+  provider: string,
+  model: string,
+  width: number,
+  height: number,
+  references: string[],
+  role: 'start' | 'end',
+): string {
+  return sha256({ prompt, provider, model, width, height, references, role });
+}
+
+type ShotFiles = {
+  image?: string;
+  video?: string;
+  start?: string;
+  end?: string;
+};
+
+function imageCacheHash(
+  shot: Shot,
+  plan: ShotMediaPlan,
+  files: ShotFiles,
+  provider: string,
+  model: string,
+  width: number,
+  height: number,
+  references: string[],
+): string | null {
+  if (plan.source === 'interpolate' || (plan.start?.type === 'generate' && plan.generateImage)) {
+    if (plan.start?.type === 'generate') {
+      return frameImageHash(framePrompt(shot.start_image) ?? '', provider, model, width, height, references, 'start');
+    }
+    if (plan.start?.type === 'file') {
+      const file = files.start ?? files.image;
+      return file ? suppliedImageHash(file, width, height, 'start') : null;
+    }
+    return null;
+  }
+  if (plan.generateImage) return imageHash(shot, provider, model, width, height, references);
+  if (plan.source === 'image') {
+    const file = files.image ?? files.start;
+    return file ? suppliedImageHash(file, width, height, 'still') : null;
+  }
+  return null;
+}
+
+function endCacheHash(
+  shot: Shot,
+  plan: ShotMediaPlan,
+  files: ShotFiles,
+  provider: string,
+  model: string,
+  width: number,
+  height: number,
+  references: string[],
+): string | null {
+  if (plan.end?.type === 'generate') {
+    return frameImageHash(framePrompt(shot.end_image) ?? '', provider, model, width, height, references, 'end');
+  }
+  if (plan.end?.type === 'file' && files.end) return suppliedImageHash(files.end, width, height, 'end');
+  return null;
+}
+
+function videoStamps(
+  plan: ShotMediaPlan,
+  files: ShotFiles,
+  previousStamp: string | null,
+): { imageStamp: string | null; endStamp: string | null } {
+  let imageStamp: string | null = null;
+  if (plan.start?.type === 'previous') imageStamp = previousStamp;
+  else if (plan.source === 'interpolate' && plan.start?.type === 'file') {
+    const file = files.start ?? files.image;
+    imageStamp = file ? fileStamp(file) : null;
+  } else if (plan.source === 'image' || files.image) {
+    const file = files.image ?? files.start;
+    imageStamp = file ? fileStamp(file) : null;
+  }
+  const endStamp = plan.end?.type === 'file' && files.end ? fileStamp(files.end) : null;
+  return { imageStamp, endStamp };
+}
+
+function lastFrameStamp(manifest: Manifest, shot: Shot | undefined, workDir: string): string | null {
+  if (!shot) return null;
+  const entry = manifest.shots[shot.id];
+  if (!entry) return null;
+  if (entry.lastFrame && existsSync(path.join(workDir, entry.lastFrame))) {
+    return fileStamp(path.join(workDir, entry.lastFrame));
+  }
+  const plan = planShotMedia(shot);
+  if (!plan.generateVideo && plan.source !== 'video') {
+    const image = selectedTake(entry, 'image', workDir);
+    if (image) return fileStamp(path.join(workDir, image.path));
+  }
+  return null;
 }
 
 function suppliedVideoHash(file: string, shot: Shot, width: number, height: number, fps: number): string {
@@ -139,27 +250,76 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
   const size = frameSize(project.aspect);
   const assetsDir = resolveAssetsDir(project.file, project.assets);
   const cache = emptyCache(project);
-  const shotFiles = new Map<string, { image?: string; video?: string }>();
+  const shotFiles = new Map<string, ShotFiles>();
+  let previousUnstable = options.fresh;
 
-  for (const shot of project.shots) {
-    const imageFile = shot.image ? requireAsset(project.file, shot.image, `Image for shot "${shot.id}"`, assetsDir) : undefined;
-    const videoFile = shot.video ? requireAsset(project.file, shot.video, `Video for shot "${shot.id}"`, assetsDir) : undefined;
+  for (let index = 0; index < project.shots.length; index += 1) {
+    const shot = project.shots[index];
+    const files = collectShotFiles(project, shot, assetsDir);
     const references = collectReferenceFiles(project, shot, assetsDir).map(fileStamp);
-    shotFiles.set(shot.id, { image: imageFile, video: videoFile });
+    shotFiles.set(shot.id, files);
     const entry = shotEntry(manifest, shot.id);
     const mediaPlan = planShotMedia(shot);
-    if (!options.fresh && (mediaPlan.generateImage || mediaPlan.source === 'image')) {
-      const hash = mediaPlan.generateImage
-        ? imageHash(shot, media.id, project.models.image, size.width, size.height, references)
-        : suppliedImageHash(imageFile as string, size.width, size.height);
-      cache.images[shot.id] = Boolean(reusableTake(entry.takes, entry.selected.image, 'image', hash, workDir));
+    const imageHashValue = imageCacheHash(
+      shot,
+      mediaPlan,
+      files,
+      media.id,
+      project.models.image,
+      size.width,
+      size.height,
+      references,
+    );
+    if (!options.fresh && imageHashValue) {
+      cache.images[shot.id] = Boolean(
+        reusableTake(entry.takes, entry.selected.image, 'image', imageHashValue, workDir),
+      );
     }
+    const endHashValue = endCacheHash(
+      shot,
+      mediaPlan,
+      files,
+      media.id,
+      project.models.image,
+      size.width,
+      size.height,
+      references,
+    );
+    if (!options.fresh && endHashValue) {
+      cache.ends[shot.id] = Boolean(reusableTake(entry.takes, entry.selected.end, 'end', endHashValue, workDir));
+    }
+    const previousStamp =
+      !options.fresh && !previousUnstable ? lastFrameStamp(manifest, project.shots[index - 1], workDir) : null;
+    let videoHit = false;
     if (!options.fresh && (mediaPlan.generateVideo || mediaPlan.source === 'video')) {
-      const imageStamp = imageFile ? fileStamp(imageFile) : null;
-      const hash = mediaPlan.generateVideo
-        ? videoHash(shot, media.id, project.models.video, size.width, size.height, project.fps, references, imageStamp)
-        : suppliedVideoHash(videoFile as string, shot, size.width, size.height, project.fps);
-      cache.videos[shot.id] = Boolean(reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir));
+      if (mediaPlan.source === 'video' && files.video) {
+        const hash = suppliedVideoHash(files.video, shot, size.width, size.height, project.fps);
+        videoHit = Boolean(reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir));
+      } else if (mediaPlan.start?.type !== 'previous' || previousStamp) {
+        const stamps = videoStamps(mediaPlan, files, previousStamp);
+        const hash = videoHash(
+          shot,
+          media.id,
+          project.models.video,
+          size.width,
+          size.height,
+          project.fps,
+          references,
+          stamps.imageStamp,
+          stamps.endStamp,
+        );
+        videoHit = Boolean(reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir));
+      }
+      cache.videos[shot.id] = videoHit;
+    }
+    const playsVideo = mediaPlan.generateVideo || mediaPlan.source === 'video';
+    if (playsVideo) {
+      const lastReady = Boolean(entry.lastFrame && existsSync(path.join(workDir, entry.lastFrame)));
+      previousUnstable = !videoHit || !lastReady;
+    } else if (imageHashValue) {
+      previousUnstable = !cache.images[shot.id];
+    } else {
+      previousUnstable = true;
     }
   }
   if (!options.fresh && project.voiceover && voice) {
@@ -189,19 +349,20 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
   await confirmPaid(estimate.paid, options.yes);
 
   mkdirSync(workDir, { recursive: true });
-  for (const shot of project.shots) {
-    const files = shotFiles.get(shot.id);
+  for (let index = 0; index < project.shots.length; index += 1) {
+    const shot = project.shots[index];
+    const files = shotFiles.get(shot.id) ?? collectShotFiles(project, shot, assetsDir);
     await generateShot({
       project,
       shot,
+      index,
       media,
       manifest,
       workDir,
       fresh: options.fresh,
       size,
       assetsDir,
-      imageFile: files?.image,
-      videoFile: files?.video,
+      files,
     });
     saveManifest(workDir, manifest);
   }
@@ -224,93 +385,189 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
   return { project, estimate, workDir, manifest };
 }
 
+function collectShotFiles(project: LoadedProject, shot: Shot, assetsDir: string | undefined): ShotFiles {
+  const startRel = framePath(shot.start_image);
+  const endRel = framePath(shot.end_image);
+  return {
+    image: shot.image ? requireAsset(project.file, shot.image, `Image for shot "${shot.id}"`, assetsDir) : undefined,
+    video: shot.video ? requireAsset(project.file, shot.video, `Video for shot "${shot.id}"`, assetsDir) : undefined,
+    start: startRel ? requireAsset(project.file, startRel, `Start image for shot "${shot.id}"`, assetsDir) : undefined,
+    end: endRel ? requireAsset(project.file, endRel, `End image for shot "${shot.id}"`, assetsDir) : undefined,
+  };
+}
+
 async function generateShot(input: {
   project: LoadedProject;
   shot: Shot;
+  index: number;
   media: MediaProvider;
   manifest: Manifest;
   workDir: string;
   fresh: boolean;
   size: { width: number; height: number };
   assetsDir?: string;
-  imageFile?: string;
-  videoFile?: string;
+  files: ShotFiles;
 }): Promise<void> {
-  const { project, shot, media, manifest, workDir, fresh, size, assetsDir, imageFile, videoFile } = input;
+  const { project, shot, index, media, manifest, workDir, fresh, size, assetsDir, files } = input;
   const entry = shotEntry(manifest, shot.id);
   const mediaPlan = planShotMedia(shot);
   const referenceFiles = collectReferenceFiles(project, shot, assetsDir);
   const referenceStamps = referenceFiles.map(fileStamp);
   let imageTake: Take | undefined;
+  let startAbsolute: string | undefined;
 
-  if (mediaPlan.source === 'video' && videoFile) {
-    const hash = suppliedVideoHash(videoFile, shot, size.width, size.height, project.fps);
+  if (mediaPlan.source === 'video' && files.video) {
+    const hash = suppliedVideoHash(files.video, shot, size.width, size.height, project.fps);
     const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
     if (cached) {
       console.log(`video ${shot.id} cached (${cached.id})`);
       entry.selected.video = cached.id;
+      await rememberLastFrame(entry, workDir, shot.id, cached.path, true);
       return;
     }
     const id = nextTakeId(entry.takes, 'video');
     const relative = path.join('shots', shot.id, `${id}.mp4`);
     console.log(`video ${shot.id} using ${shot.video} (trimmed to ${shot.duration}s)`);
-    await trimClip(videoFile, path.join(workDir, relative), shot.duration, project.fps, size.width, size.height);
+    await trimClip(files.video, path.join(workDir, relative), shot.duration, project.fps, size.width, size.height);
     addTake(entry, suppliedTake(id, 'video', hash, relative));
+    await rememberLastFrame(entry, workDir, shot.id, relative, false);
     return;
   }
 
-  if (mediaPlan.source === 'image' && imageFile) {
-    const hash = suppliedImageHash(imageFile, size.width, size.height);
-    imageTake = fresh ? undefined : reusableTake(entry.takes, entry.selected.image, 'image', hash, workDir);
-    if (imageTake) {
-      console.log(`image ${shot.id} cached (${imageTake.id})`);
-      entry.selected.image = imageTake.id;
-    } else {
-      const id = nextTakeId(entry.takes, 'image');
-      const relative = path.join('shots', shot.id, `${id}.png`);
-      console.log(`image ${shot.id} using ${shot.image}`);
-      await fitStill(imageFile, path.join(workDir, relative), size.width, size.height);
-      imageTake = suppliedTake(id, 'image', hash, relative);
-      addTake(entry, imageTake);
+  if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'previous') {
+    const previous = project.shots[index - 1];
+    const previousEntry = previous ? manifest.shots[previous.id] : undefined;
+    const relative = previousEntry?.lastFrame;
+    if (!previous || !relative || !existsSync(path.join(workDir, relative))) {
+      throw new StudioError(
+        `Shot "${shot.id}" uses start_from: previous, but ${previous ? `shot "${previous.id}"` : 'the previous shot'} has no last frame yet.`,
+      );
     }
+    startAbsolute = path.join(workDir, relative);
+    console.log(`video ${shot.id} start from ${previous.id} last frame`);
+  } else if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'file') {
+    const file = files.start ?? files.image;
+    if (!file) throw new StudioError(`Shot "${shot.id}" is missing its start image.`);
+    imageTake = await importStill({
+      entry,
+      workDir,
+      fresh,
+      shotId: shot.id,
+      source: file,
+      label: framePath(shot.start_image) ?? shot.image ?? file,
+      hash: suppliedImageHash(file, size.width, size.height, 'start'),
+      width: size.width,
+      height: size.height,
+    });
+    startAbsolute = path.join(workDir, imageTake.path);
+  } else if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'generate') {
+    imageTake = await generateStill({
+      entry,
+      workDir,
+      fresh,
+      shot,
+      media,
+      project,
+      referenceFiles,
+      hash: frameImageHash(
+        framePrompt(shot.start_image) ?? '',
+        media.id,
+        project.models.image,
+        size.width,
+        size.height,
+        referenceStamps,
+        'start',
+      ),
+      prompt: framePrompt(shot.start_image) ?? '',
+      kind: 'image',
+      width: size.width,
+      height: size.height,
+    });
+    startAbsolute = path.join(workDir, imageTake.path);
+  } else if (mediaPlan.source === 'image') {
+    const file = files.image ?? files.start;
+    if (!file) throw new StudioError(`Shot "${shot.id}" is missing its still.`);
+    imageTake = await importStill({
+      entry,
+      workDir,
+      fresh,
+      shotId: shot.id,
+      source: file,
+      label: shot.image ?? framePath(shot.start_image) ?? file,
+      hash: suppliedImageHash(file, size.width, size.height, 'still'),
+      width: size.width,
+      height: size.height,
+    });
   } else if (mediaPlan.generateImage) {
-    const hash = imageHash(shot, media.id, project.models.image, size.width, size.height, referenceStamps);
-    imageTake = fresh ? undefined : reusableTake(entry.takes, entry.selected.image, 'image', hash, workDir);
-    if (imageTake) {
-      console.log(`image ${shot.id} cached (${imageTake.id})`);
-      entry.selected.image = imageTake.id;
-    } else {
-      const id = nextTakeId(entry.takes, 'image');
-      const relative = path.join('shots', shot.id, `${id}.png`);
-      const outPath = path.join(workDir, relative);
-      console.log(`image ${shot.id} generating (${media.id}, ${project.models.image})…`);
-      if (referenceFiles.length) console.log(`  references: ${referenceFiles.map((file) => path.basename(file)).join(', ')}`);
-      await media.generateImage({
-        prompt: shot.prompt ?? '',
-        width: size.width,
-        height: size.height,
-        aspect: project.aspect,
-        model: project.models.image,
-        referenceImages: referenceFiles,
-        referenceImageField: project.models.referenceImageField,
-        outPath,
-      });
-      imageTake = {
-        id,
-        kind: 'image',
-        inputHash: hash,
-        provider: media.id,
-        model: project.models.image,
-        path: relative,
-        createdAt: new Date().toISOString(),
-        status: 'done',
-      };
-      addTake(entry, imageTake);
-    }
+    const nested = framePrompt(shot.start_image);
+    const hash = nested
+      ? frameImageHash(nested, media.id, project.models.image, size.width, size.height, referenceStamps, 'start')
+      : imageHash(shot, media.id, project.models.image, size.width, size.height, referenceStamps);
+    imageTake = await generateStill({
+      entry,
+      workDir,
+      fresh,
+      shot,
+      media,
+      project,
+      referenceFiles,
+      hash,
+      prompt: nested ?? shot.prompt ?? '',
+      kind: 'image',
+      width: size.width,
+      height: size.height,
+    });
+    startAbsolute = path.join(workDir, imageTake.path);
   }
 
-  if (!mediaPlan.generateVideo) return;
-  const imageStamp = imageFile ? fileStamp(imageFile) : null;
+  let endAbsolute: string | undefined;
+  if (mediaPlan.end?.type === 'file' && files.end) {
+    const endTake = await importStill({
+      entry,
+      workDir,
+      fresh,
+      shotId: shot.id,
+      source: files.end,
+      label: framePath(shot.end_image) ?? files.end,
+      hash: suppliedImageHash(files.end, size.width, size.height, 'end'),
+      width: size.width,
+      height: size.height,
+      kind: 'end',
+    });
+    endAbsolute = path.join(workDir, endTake.path);
+  } else if (mediaPlan.end?.type === 'generate') {
+    const endTake = await generateStill({
+      entry,
+      workDir,
+      fresh,
+      shot,
+      media,
+      project,
+      referenceFiles,
+      hash: frameImageHash(
+        framePrompt(shot.end_image) ?? '',
+        media.id,
+        project.models.image,
+        size.width,
+        size.height,
+        referenceStamps,
+        'end',
+      ),
+      prompt: framePrompt(shot.end_image) ?? '',
+      kind: 'end',
+      width: size.width,
+      height: size.height,
+    });
+    endAbsolute = path.join(workDir, endTake.path);
+  }
+
+  if (!mediaPlan.generateVideo) {
+    if (imageTake) entry.lastFrame = imageTake.path;
+    return;
+  }
+
+  const previousStamp = mediaPlan.start?.type === 'previous' && startAbsolute ? fileStamp(startAbsolute) : null;
+  const stamps = videoStamps(mediaPlan, files, previousStamp);
   const hash = videoHash(
     shot,
     media.id,
@@ -319,12 +576,14 @@ async function generateShot(input: {
     size.height,
     project.fps,
     referenceStamps,
-    imageStamp,
+    stamps.imageStamp,
+    stamps.endStamp,
   );
   const cached = fresh ? undefined : reusableTake(entry.takes, entry.selected.video, 'video', hash, workDir);
   if (cached) {
     console.log(`video ${shot.id} cached (${cached.id})`);
     entry.selected.video = cached.id;
+    await rememberLastFrame(entry, workDir, shot.id, cached.path, true);
     return;
   }
   const id = nextTakeId(entry.takes, 'video');
@@ -332,6 +591,7 @@ async function generateShot(input: {
   const outPath = path.join(workDir, relative);
   console.log(`video ${shot.id} generating (${media.id}, ${project.models.video})…`);
   if (referenceFiles.length) console.log(`  references: ${referenceFiles.map((file) => path.basename(file)).join(', ')}`);
+  if (endAbsolute) console.log(`  end frame: ${framePath(shot.end_image) ?? 'generated still'}`);
   await media.generateVideo({
     prompt: shot.prompt ?? '',
     width: size.width,
@@ -339,11 +599,13 @@ async function generateShot(input: {
     durationSec: shot.duration,
     fps: project.fps,
     model: project.models.video,
-    mode: imageTake ? 'image-to-video' : (shot.videoMode ?? 'image-to-video'),
-    imagePath: imageTake ? path.join(workDir, imageTake.path) : undefined,
+    mode: startAbsolute || imageTake ? 'image-to-video' : (shot.videoMode ?? 'image-to-video'),
+    imagePath: startAbsolute ?? (imageTake ? path.join(workDir, imageTake.path) : undefined),
+    endImagePath: endAbsolute,
     camera: shot.camera,
     aspect: project.aspect,
     imageField: project.models.videoImageField,
+    endImageField: project.models.endImageField,
     referenceImages: referenceFiles,
     referenceImageField: project.models.referenceImageField,
     outPath,
@@ -358,9 +620,107 @@ async function generateShot(input: {
     createdAt: new Date().toISOString(),
     status: 'done',
   });
+  await rememberLastFrame(entry, workDir, shot.id, relative, false);
 }
 
-function suppliedTake(id: string, kind: 'image' | 'video', hash: string, relative: string): Take {
+async function importStill(input: {
+  entry: ShotEntry;
+  workDir: string;
+  fresh: boolean;
+  shotId: string;
+  source: string;
+  label: string;
+  hash: string;
+  width: number;
+  height: number;
+  kind?: 'image' | 'end';
+}): Promise<Take> {
+  const kind = input.kind ?? 'image';
+  const cached = input.fresh
+    ? undefined
+    : reusableTake(input.entry.takes, input.entry.selected[kind], kind, input.hash, input.workDir);
+  if (cached) {
+    console.log(`${kind} ${input.shotId} cached (${cached.id})`);
+    input.entry.selected[kind] = cached.id;
+    return cached;
+  }
+  const id = nextTakeId(input.entry.takes, kind);
+  const relative = path.join('shots', input.shotId, `${id}.png`);
+  console.log(`${kind} ${input.shotId} using ${input.label}`);
+  await fitStill(input.source, path.join(input.workDir, relative), input.width, input.height);
+  const take = suppliedTake(id, kind, input.hash, relative);
+  addTake(input.entry, take);
+  return take;
+}
+
+async function generateStill(input: {
+  entry: ShotEntry;
+  workDir: string;
+  fresh: boolean;
+  shot: Shot;
+  media: MediaProvider;
+  project: LoadedProject;
+  referenceFiles: string[];
+  hash: string;
+  prompt: string;
+  kind: 'image' | 'end';
+  width: number;
+  height: number;
+}): Promise<Take> {
+  const cached = input.fresh
+    ? undefined
+    : reusableTake(input.entry.takes, input.entry.selected[input.kind], input.kind, input.hash, input.workDir);
+  if (cached) {
+    console.log(`${input.kind} ${input.shot.id} cached (${cached.id})`);
+    input.entry.selected[input.kind] = cached.id;
+    return cached;
+  }
+  const id = nextTakeId(input.entry.takes, input.kind);
+  const relative = path.join('shots', input.shot.id, `${id}.png`);
+  console.log(`${input.kind} ${input.shot.id} generating (${input.media.id}, ${input.project.models.image})…`);
+  if (input.referenceFiles.length) {
+    console.log(`  references: ${input.referenceFiles.map((file) => path.basename(file)).join(', ')}`);
+  }
+  await input.media.generateImage({
+    prompt: input.prompt,
+    width: input.width,
+    height: input.height,
+    aspect: input.project.aspect,
+    model: input.project.models.image,
+    referenceImages: input.referenceFiles,
+    referenceImageField: input.project.models.referenceImageField,
+    outPath: path.join(input.workDir, relative),
+  });
+  const take: Take = {
+    id,
+    kind: input.kind,
+    inputHash: input.hash,
+    provider: input.media.id,
+    model: input.project.models.image,
+    path: relative,
+    createdAt: new Date().toISOString(),
+    status: 'done',
+  };
+  addTake(input.entry, take);
+  return take;
+}
+
+async function rememberLastFrame(
+  entry: ShotEntry,
+  workDir: string,
+  shotId: string,
+  videoRelative: string,
+  reuseExisting: boolean,
+): Promise<void> {
+  const relative = path.join('shots', shotId, 'last.png');
+  const out = path.join(workDir, relative);
+  if (!(reuseExisting && existsSync(out))) {
+    await extractLastFrame(path.join(workDir, videoRelative), out);
+  }
+  entry.lastFrame = relative;
+}
+
+function suppliedTake(id: string, kind: 'image' | 'video' | 'end', hash: string, relative: string): Take {
   return {
     id,
     kind,

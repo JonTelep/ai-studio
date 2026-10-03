@@ -21,9 +21,13 @@ export type GenerateVideoInput = {
   model: string;
   mode: 'image-to-video' | 'text-to-video';
   imagePath?: string;
+  /** Last frame. The model generates the motion from imagePath to this still. */
+  endImagePath?: string;
   camera: Camera;
   aspect: '9:16' | '1:1' | '16:9';
   imageField?: string;
+  /** fal input name for the end frame. Default end_image_url. */
+  endImageField?: string;
   referenceImages?: string[];
   referenceImageField?: string;
   outPath: string;
