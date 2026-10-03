@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Placeholder pipeline
+        env:
+          STUDIO_FORBID_PAID: '1'
+        run: |
+          npm run studio -- all projects/ocean.yaml --yes --renderer ffmpeg
+          npm run studio -- all projects/meme-example.yaml --yes --renderer ffmpeg
+          test -s work/ocean/output.mp4
+          test -s work/meme-example/output.mp4

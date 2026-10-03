@@ -1,0 +1,39 @@
+const URL_KEYS = new Set(['url', 'video_url', 'image_url', 'audio_url']);
+
+export function extractMediaUrl(data: unknown): string {
+  const urls: string[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (URL_KEYS.has(key) && typeof value === 'string' && /^https?:\/\//.test(value)) {
+        urls.push(value);
+      } else {
+        walk(value);
+      }
+    }
+  };
+  walk(data);
+  const video = urls.find((url) => /\.(mp4|webm|mov)(\?|$)/i.test(url));
+  if (video) return video;
+  if (urls[0]) return urls[0];
+  throw new Error('Provider response did not include a media URL.');
+}
+
+export function videoImageField(model: string, override?: string): string {
+  if (override) return override;
+  if (model.includes('kling')) return 'start_image_url';
+  return 'image_url';
+}
+
+export function fluxImageSize(aspect: '9:16' | '1:1' | '16:9', width: number, height: number, model: string) {
+  if (model.includes('flux-2') || model.includes('flux/2')) {
+    return { width, height };
+  }
+  if (aspect === '16:9') return 'landscape_16_9';
+  if (aspect === '9:16') return 'portrait_16_9';
+  return 'square_hd';
+}

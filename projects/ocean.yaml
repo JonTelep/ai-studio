@@ -1,0 +1,37 @@
+title: Open Ocean
+aspect: "16:9"
+fps: 30
+provider: placeholder
+models:
+  image: fal-ai/flux/dev
+  video: bytedance/seedance-2.0/image-to-video
+shots:
+  - id: horizon
+    kind: image
+    duration: 4
+    camera: ken-burns-in
+    prompt: >-
+      Super realistic photograph of a calm open ocean at golden hour, glassy
+      water, a low distant horizon, soft volumetric light, fine surface
+      detail, no text, no people, no boats
+  - id: swell
+    kind: video
+    videoMode: image-to-video
+    duration: 3
+    camera: slow-push
+    prompt: >-
+      Super realistic slow ocean swell just above the water, sunlight
+      glittering on the surface, gentle continuous motion, natural color, no
+      text, no people
+  - id: underwater
+    kind: image
+    duration: 3
+    camera: ken-burns-out
+    prompt: >-
+      Super realistic underwater photograph looking up through deep blue water
+      at the bright surface, caustic light rays, fine particles, no text, no
+      people, no fish in the foreground
+captions:
+  style: clean
+edit:
+  snapCutsToBeats: false

@@ -1,2 +1,156 @@
 # ai-studio
+
 Open-source AI video studio. Describe a shot list, and it orchestrates image, video, voice and sound models, then edits everything into a finished MP4 with code-timed cuts, captions and motion graphics. Bring your own keys.
+
+It is a general studio for short clips. A project can be a super-realistic ocean shot or a caption-driven joke. Length is just the number of shots. The examples are about 7 to 10 seconds. The edit is a Remotion composition: a pure function of time that sequences shots, moves stills, lays word-by-word captions, and mixes audio.
+
+Inspired by agent-made music videos.
+
+## Quick start
+
+Requires Node.js 20 or newer and ffmpeg.
+
+```bash
+git clone https://github.com/JonTelep/ai-studio.git
+cd ai-studio
+cp .env.example .env
+npm install
+npm run studio -- all projects/ocean.yaml --yes --renderer ffmpeg
+```
+
+That renders `work/ocean/output.mp4` with the placeholder provider. No API key and no spend. The meme example does the same, with captions, a voice stand-in, and beat-snapped cuts:
+
+```bash
+npm run studio -- all projects/meme-example.yaml --yes --renderer ffmpeg
+```
+
+The default renderer is Remotion, which downloads a headless Chrome on first use:
+
+```bash
+npm run studio -- all projects/ocean.yaml --yes
+```
+
+`--renderer ffmpeg` uses the same shot list, camera moves, captions, and audio mix without Chrome. Use it in CI or on a machine where you do not want a browser download.
+
+To generate with fal.ai, put `FAL_KEY` in `.env` and point the project at fal:
+
+```bash
+npm run studio -- all projects/ocean.yaml --provider fal --yes
+```
+
+`--yes` is required for paid calls when stdin is not a terminal. Without it, the CLI prints the call count and asks. `--dry-run` prints that count and exits before any provider is called.
+
+## Commands
+
+```bash
+npm run studio -- generate projects/ocean.yaml
+npm run studio -- render projects/ocean.yaml
+npm run studio -- all projects/ocean.yaml
+npm run studio -- takes projects/ocean.yaml
+npm run studio -- select projects/ocean.yaml horizon image-1
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--yes` | Skip the paid-call confirmation |
+| `--dry-run` | Print the estimate only |
+| `--fresh` | Ignore cached takes and make new ones |
+| `--provider placeholder\|fal\|auto` | Override the project provider |
+| `--renderer remotion\|ffmpeg` | Choose the encoder. Default `remotion` |
+| `--analyzer energy\|python` | Beat tracker. Default `energy` |
+| `--whisper` | Optional local Whisper word timestamps |
+
+Generation writes every take under `work/<project>/` and a `manifest.json`. A later run skips a shot when a finished take has the same prompt, model, provider, and size, and the file is still on disk. `takes` lists them. `select` picks which image, video, or voice take the render uses. The selected take is marked with `*`.
+
+## Providers
+
+`provider` on the project is `placeholder`, `fal`, or `auto`.
+
+- **placeholder** draws gradient stills with the prompt on them, turns video shots into short moves, and synthesizes a quiet tone plus even word timings. It never opens a network connection.
+- **fal** calls fal.ai for stills and video. The default still model is `fal-ai/flux/dev`. The default video model is `bytedance/seedance-2.0/image-to-video`. Kling image-to-video is `fal-ai/kling-video/v3/pro/image-to-video` (it reads `start_image_url` instead of `image_url`). Set the ids in the project or in `studio.config.yaml`. The catalog changes.
+- **auto** uses fal when `FAL_KEY` is set, otherwise the placeholder.
+
+Image-to-video shots generate a still, then animate it. Text-to-video shots skip the still. For placeholder videos, camera motion is baked into the take. For fal videos, describe the motion in the prompt. Ken Burns and pans in the edit apply to stills.
+
+Voice is optional. `voiceover.provider` is `placeholder`, `elevenlabs`, or `auto`. Auto uses ElevenLabs when `ELEVENLABS_API_KEY` is set. ElevenLabs is called with timestamps so captions can follow words. The placeholder lines words up with each shot when the script matches the shot text, and spreads them across the timeline otherwise.
+
+`STUDIO_FORBID_PAID=1` makes every paid provider refuse to run. CI sets it.
+
+## Cost
+
+The CLI prints how many image, video, and voice calls a run will make, and how many are already cached. It does not invent a dollar amount. fal.ai bills per image and per video second, ElevenLabs bills per character, and both change their prices. Check the provider before you pass `--yes`. The placeholder provider is free.
+
+## Project file
+
+YAML or JSON. See `projects/ocean.yaml` and `projects/meme-example.yaml`. `studio.config.yaml` supplies defaults. The project wins.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `title` | yes | |
+| `aspect` | yes | `9:16`, `1:1`, or `16:9`. Frames are 720x1280, 1080x1080, or 1280x720 |
+| `fps` | no | Default 30 |
+| `provider` | no | `auto`, `placeholder`, or `fal` |
+| `models.image` | no | fal image endpoint id |
+| `models.video` | no | fal video endpoint id |
+| `models.voice` | no | ElevenLabs model id |
+| `models.videoImageField` | no | Override the image field sent to the video model |
+| `shots` | yes | At least one |
+| `shots[].id` | yes | Short id, unique |
+| `shots[].prompt` | yes | Image or video prompt |
+| `shots[].duration` | yes | Seconds, greater than 0 and at most 120 |
+| `shots[].kind` | no | `image` (default) or `video` |
+| `shots[].videoMode` | no | `image-to-video` (default) or `text-to-video` |
+| `shots[].camera` | no | `static`, `ken-burns-in`, `ken-burns-out`, `pan-left`, `pan-right`, `slow-push` |
+| `shots[].text` | no | On-screen line. Becomes captions when there is no voiceover |
+| `voiceover.script` | no | Spoken line |
+| `voiceover.provider` | no | `auto`, `placeholder`, or `elevenlabs` |
+| `voiceover.voiceId` | no | ElevenLabs voice id |
+| `music.file` | no | Path relative to the project file |
+| `music.volume` | no | 0 to 1, default 0.25 |
+| `sfx[].file` | no | Path relative to the project file |
+| `sfx[].at` | no | Start time in seconds |
+| `sfx[].volume` | no | 0 to 1, default 0.8 |
+| `captions.style` | no | `impact`, `clean`, or `minimal` |
+| `edit.snapCutsToBeats` | no | Move interior cuts onto detected beats |
+| `edit.snapWindowSec` | no | How far a cut may move, default 0.25 |
+
+Validation errors name the field, for example `shots.0.duration: Duration must be greater than 0`.
+
+Captions come from voiceover word timings when a voiceover exists. Otherwise they come from each shot's `text`. `impact` is bold centered meme type, `clean` is a bottom subtitle, `minimal` is a smaller lower-third. The current word is highlighted.
+
+## Audio analysis
+
+Music is decoded with ffmpeg and tracked in TypeScript (energy envelope, onsets, autocorrelation tempo). The result is `work/<project>/analysis/music.json`:
+
+```json
+{ "source": "energy", "bpm": 120, "onsets": [0, 0.5], "beats": [0, 0.5] }
+```
+
+Word timings are `work/<project>/voice/words.json`. Cuts snap to beats when `edit.snapCutsToBeats` is true. Captions snap to those words.
+
+Optional Python extras, not installed by `npm install` and not used in CI:
+
+```bash
+pip install -r requirements-audio.txt   # librosa, for --analyzer python
+pip install openai-whisper              # for --whisper
+```
+
+`--analyzer python` runs `python/analyze_audio.py`. `--whisper` runs `python/whisper_words.py` (the base model download is large).
+
+## Edit and render
+
+`src/composition/StudioVideo.tsx` is the Remotion composition. What you see at a frame depends only on the render plan and the time: which shot is active, the Ken Burns or pan transform on stills, the caption cue, and the audio. `render` bundles that composition and encodes an H.264 MP4, or the ffmpeg renderer builds the same timeline with zoompan, ASS captions, and an audio mix. Output is `work/<project>/output.mp4`. `work/` and `.env` are gitignored.
+
+## Development
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+```
+
+GitHub Actions runs those, then renders both example projects with the placeholder provider and ffmpeg. Do not put real keys in the repo. Do not call paid APIs from CI.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

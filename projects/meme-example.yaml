@@ -1,0 +1,43 @@
+title: Monday Meeting
+aspect: "9:16"
+fps: 30
+provider: placeholder
+models:
+  image: fal-ai/flux/dev
+  video: fal-ai/kling-video/v3/pro/image-to-video
+shots:
+  - id: setup
+    kind: image
+    duration: 2.4
+    camera: static
+    text: When the sprint
+    prompt: >-
+      Photoreal golden retriever in a slightly too-small business suit sitting
+      at a laptop in a bright office, comedic but realistic, no text in the image
+  - id: twist
+    kind: image
+    duration: 2.6
+    camera: ken-burns-in
+    text: is just one meeting
+    prompt: >-
+      Photoreal golden retriever in a business suit staring into the camera
+      with exhausted eyes in a glass conference room, comedic, no text in the image
+  - id: punch
+    kind: image
+    duration: 2.2
+    camera: static
+    text: that could have been an email
+    prompt: >-
+      Photoreal golden retriever in a business suit dramatically sliding off an
+      office chair, motion blur, comedic, no text in the image
+voiceover:
+  script: When the sprint is just one meeting that could have been an email
+  provider: placeholder
+music:
+  file: ../assets/meme-beat.wav
+  volume: 0.35
+captions:
+  style: impact
+edit:
+  snapCutsToBeats: true
+  snapWindowSec: 0.25
