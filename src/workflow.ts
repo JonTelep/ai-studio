@@ -197,6 +197,7 @@ export async function dryProject(projectPath: string): Promise<string> {
       dryRun: false,
       fresh: false,
       provider: 'placeholder',
+      voiceProvider: 'placeholder',
       whisper: false,
       analyzer: 'energy',
       workRoot: previewRoot,
@@ -219,6 +220,7 @@ export async function dryProject(projectPath: string): Promise<string> {
       dryRun: false,
       fresh: false,
       provider: 'placeholder',
+      voiceProvider: 'placeholder',
       whisper: false,
       analyzer: 'energy',
     });

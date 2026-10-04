@@ -11,9 +11,9 @@ export function resolveMediaProvider(project: Project, override?: string): Media
   return process.env.FAL_KEY ? falMedia : placeholderMedia;
 }
 
-export function resolveVoiceProvider(project: Project): VoiceProvider | null {
+export function resolveVoiceProvider(project: Project, override?: string): VoiceProvider | null {
   if (!project.voiceover) return null;
-  const choice = project.voiceover.provider;
+  const choice = override ?? project.voiceover.provider;
   if (choice === 'placeholder') return placeholderVoice;
   if (choice === 'elevenlabs') return elevenLabsVoice;
   return process.env.ELEVENLABS_API_KEY ? elevenLabsVoice : placeholderVoice;

@@ -57,6 +57,9 @@ describe('providers', () => {
     const meme = loadProject('projects/meme-example/project.yaml');
     expect(resolveMediaProvider(meme).id).toBe('placeholder');
     expect(resolveVoiceProvider(meme)?.id).toBe('placeholder');
+    meme.voiceover = { ...meme.voiceover!, provider: 'elevenlabs', script: meme.voiceover!.script, voiceId: 'voice' };
+    expect(resolveVoiceProvider(meme, 'placeholder')?.id).toBe('placeholder');
+    expect(resolveVoiceProvider(meme, 'placeholder')?.paid).toBe(false);
     expect(resolveMediaProvider(meme, 'fal').paid).toBe(true);
   });
 

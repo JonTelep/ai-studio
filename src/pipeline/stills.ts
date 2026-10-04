@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { LoadedProject } from '../project/load.js';
 import { framePath } from '../project/schema.js';
 import { StudioError } from '../util/ffmpeg.js';
+import { staleGeneratedStill } from './generate.js';
 import { loadManifest, selectedTake } from './manifest.js';
 import { resolveAsset, resolveAssetsDir } from './paths.js';
 import { planShotMedia } from './shot-media.js';
@@ -36,11 +37,15 @@ export function stillGaps(project: LoadedProject, workDir: string): StillGap[] {
 
     const entry = manifest.shots[shot.id];
     const needsGeneratedStart = plan.generateImage || plan.start?.type === 'generate';
-    if (needsGeneratedStart && !(entry && selectedTake(entry, 'image', workDir))) {
-      gaps.push({
-        shotId: shot.id,
-        message: `Shot "${shot.id}" needs a still. Run \`make images\` first.`,
-      });
+    if (needsGeneratedStart) {
+      const take = entry && selectedTake(entry, 'image', workDir);
+      const stale = take ? staleGeneratedStill(project, shot, take, 'image') : null;
+      if (!take || stale) {
+        gaps.push({
+          shotId: shot.id,
+          message: stale ?? `Shot "${shot.id}" needs a still. Run \`make images\` first.`,
+        });
+      }
     }
 
     if (!needsGeneratedStart && (plan.source === 'image' || plan.start?.type === 'file')) {
@@ -53,11 +58,15 @@ export function stillGaps(project: LoadedProject, workDir: string): StillGap[] {
       }
     }
 
-    if (plan.end?.type === 'generate' && !(entry && selectedTake(entry, 'end', workDir))) {
-      gaps.push({
-        shotId: shot.id,
-        message: `Shot "${shot.id}" needs an end still. Run \`make images\` first.`,
-      });
+    if (plan.end?.type === 'generate') {
+      const take = entry && selectedTake(entry, 'end', workDir);
+      const stale = take ? staleGeneratedStill(project, shot, take, 'end') : null;
+      if (!take || stale) {
+        gaps.push({
+          shotId: shot.id,
+          message: stale ?? `Shot "${shot.id}" needs an end still. Run \`make images\` first.`,
+        });
+      }
     }
     if (plan.end?.type === 'file') {
       const relative = framePath(shot.end_image);

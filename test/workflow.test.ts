@@ -10,7 +10,12 @@ import { loadProject } from '../src/project/load.js';
 import { resolveWorkDir } from '../src/project/layout.js';
 import { StudioError } from '../src/util/ffmpeg.js';
 import { generateProject } from '../src/pipeline/generate.js';
-import { imagesProject, prodProject, scaffoldProject } from '../src/workflow.js';
+import { dryProject, imagesProject, prodProject, scaffoldProject } from '../src/workflow.js';
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
 
 describe('makefile and workflow', () => {
   it('parses the workflow commands', () => {
@@ -146,6 +151,101 @@ shots:
     await prodProject(projectPath, 'ffmpeg');
     const after = loadManifest(workDir, 'flow');
     expect(after.shots.words.takes.some((take) => take.kind === 'video')).toBe(true);
+  });
+
+  it('renders dry with placeholder voice even when elevenlabs is configured', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'studio-dry-voice-'));
+    const slug = `dryvoice${Date.now().toString(36)}`;
+    const projectPath = path.join(root, `${slug}.yaml`);
+    writeFileSync(
+      projectPath,
+      `
+title: Dry voice
+aspect: "16:9"
+fps: 10
+provider: placeholder
+voiceover:
+  script: Hello from the dry run
+  provider: elevenlabs
+shots:
+  - id: one
+    prompt: A red field
+    duration: 0.3
+    camera: static
+`,
+    );
+    const previousVoice = process.env.ELEVENLABS_API_KEY;
+    const previousForbid = process.env.STUDIO_FORBID_PAID;
+    process.env.ELEVENLABS_API_KEY = 'test-key';
+    process.env.STUDIO_FORBID_PAID = '1';
+    try {
+      await dryProject(projectPath);
+      const project = loadProject(projectPath);
+      const manifest = loadManifest(resolveWorkDir(project), project.slug);
+      expect(manifest.voice.takes.length).toBeGreaterThan(0);
+      expect(manifest.voice.takes.every((take) => take.provider === 'placeholder')).toBe(true);
+
+      writeFileSync(
+        projectPath,
+        `
+title: Dry voice
+aspect: "16:9"
+fps: 10
+provider: fal
+voiceover:
+  script: Hello from the dry run
+  provider: elevenlabs
+shots:
+  - id: one
+    prompt: A red field
+    duration: 0.3
+    camera: static
+`,
+      );
+      await dryProject(projectPath);
+    } finally {
+      restoreEnv('ELEVENLABS_API_KEY', previousVoice);
+      restoreEnv('STUDIO_FORBID_PAID', previousForbid);
+    }
+  });
+
+  it('refuses prod when a still is a placeholder or from an older prompt', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'studio-stale-'));
+    const slug = `stale${Date.now().toString(36)}`;
+    const projectPath = path.join(root, `${slug}.yaml`);
+    const write = (prompt: string, provider: string) => {
+      writeFileSync(
+        projectPath,
+        `
+title: Stale
+aspect: "16:9"
+fps: 10
+provider: ${provider}
+shots:
+  - id: move
+    kind: video
+    prompt: ${prompt}
+    duration: 0.3
+    camera: static
+`,
+      );
+    };
+    write('A red field', 'placeholder');
+    await imagesProject(projectPath);
+    write('A blue field', 'placeholder');
+    await expect(prodProject(projectPath, 'ffmpeg')).rejects.toThrow(/older prompt/);
+
+    write('A red field', 'fal');
+    const previousFal = process.env.FAL_KEY;
+    const previousForbid = process.env.STUDIO_FORBID_PAID;
+    process.env.FAL_KEY = 'test-key';
+    process.env.STUDIO_FORBID_PAID = '1';
+    try {
+      await expect(prodProject(projectPath, 'ffmpeg')).rejects.toThrow(/placeholder/);
+    } finally {
+      restoreEnv('FAL_KEY', previousFal);
+      restoreEnv('STUDIO_FORBID_PAID', previousForbid);
+    }
   });
 
   it('scaffolds a project folder', () => {

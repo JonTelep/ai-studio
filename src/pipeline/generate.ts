@@ -46,6 +46,8 @@ export type GenerateOptions = {
   onlyShot?: string;
   freshImages?: boolean;
   freshVideos?: boolean;
+  /** Dry runs pass placeholder so a voiceover never bills ElevenLabs. */
+  voiceProvider?: string;
 };
 
 export type GenerateResult = {
@@ -282,7 +284,7 @@ export async function generateProject(options: GenerateOptions): Promise<Generat
     (!options.onlyShot || options.onlyShot === shotId) && (options.fresh || options.freshVideos === true);
   const manifest = loadManifest(workDir, project.slug);
   const media = resolveMediaProvider(project);
-  const voice = resolveVoiceProvider(project);
+  const voice = resolveVoiceProvider(project, options.voiceProvider);
   const size = frameSize(project.aspect);
   const assetsDir = resolveAssetsDir(project.file, project.assets);
   const cache = emptyCache(project);
@@ -516,7 +518,7 @@ async function generateShot(input: {
     startAbsolute = path.join(workDir, imageTake.path);
   } else if (mediaPlan.source === 'interpolate' && mediaPlan.start?.type === 'generate') {
     if (scope === 'videos') {
-      imageTake = existingStill(entry, workDir, 'image', shot.id);
+      imageTake = existingStill(project, shot, entry, workDir, 'image');
       startAbsolute = path.join(workDir, imageTake.path);
     } else imageTake = await generateStill({
       entry,
@@ -557,7 +559,7 @@ async function generateShot(input: {
     });
   } else if (mediaPlan.generateImage) {
     if (scope === 'videos') {
-      imageTake = existingStill(entry, workDir, 'image', shot.id);
+      imageTake = existingStill(project, shot, entry, workDir, 'image');
     } else {
       const nested = framePrompt(shot.start_image);
       const hash = nested
@@ -598,7 +600,7 @@ async function generateShot(input: {
     endAbsolute = path.join(workDir, endTake.path);
   } else if (mediaPlan.end?.type === 'generate') {
     if (scope === 'videos') {
-      const endTake = existingStill(entry, workDir, 'end', shot.id);
+      const endTake = existingStill(project, shot, entry, workDir, 'end');
       endAbsolute = path.join(workDir, endTake.path);
     } else {
     const endTake = await generateStill({
@@ -689,15 +691,53 @@ async function generateShot(input: {
   await rememberLastFrame(entry, workDir, shot.id, relative, false);
 }
 
-function existingStill(entry: ShotEntry, workDir: string, kind: 'image' | 'end', shotId: string): Take {
+function existingStill(
+  project: LoadedProject,
+  shot: Shot,
+  entry: ShotEntry,
+  workDir: string,
+  kind: 'image' | 'end',
+): Take {
   const take = selectedTake(entry, kind, workDir);
   if (!take) {
     throw new StudioError(
-      `Shot "${shotId}" needs a ${kind === 'end' ? 'end still' : 'still'}. Run make images first.`,
+      `Shot "${shot.id}" needs a ${kind === 'end' ? 'end still' : 'still'}. Run make images first.`,
     );
   }
+  const stale = staleGeneratedStill(project, shot, take, kind);
+  if (stale) throw new StudioError(stale);
   entry.selected[kind] = take.id;
   return take;
+}
+
+/** A generated still can feed video only when it matches the current provider and prompt. */
+export function staleGeneratedStill(
+  project: LoadedProject,
+  shot: Shot,
+  take: Take,
+  kind: 'image' | 'end',
+): string | null {
+  const media = resolveMediaProvider(project);
+  const plan = planShotMedia(shot);
+  let assetsDir: string | undefined;
+  try {
+    assetsDir = resolveAssetsDir(project.file, project.assets);
+  } catch {
+    assetsDir = undefined;
+  }
+  const files = collectShotFiles(project, shot, assetsDir);
+  const references = collectReferenceFiles(project, shot, assetsDir).map(fileStamp);
+  const size = frameSize(project.aspect);
+  const expected =
+    kind === 'end'
+      ? endCacheHash(shot, plan, files, media.id, project.models.image, size.width, size.height, references)
+      : imageCacheHash(shot, plan, files, media.id, project.models.image, size.width, size.height, references);
+  if (!expected || take.inputHash === expected) return null;
+  const which = kind === 'end' ? 'end still' : 'still';
+  if (take.provider === 'placeholder' && media.id !== 'placeholder') {
+    return `Shot "${shot.id}" ${which} is a placeholder. Run \`make images\` before \`make prod\`.`;
+  }
+  return `Shot "${shot.id}" ${which} is from an older prompt. Run \`make images\` first.`;
 }
 
 async function importStill(input: {
