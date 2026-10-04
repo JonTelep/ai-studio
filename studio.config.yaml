@@ -1,0 +1,7 @@
+# Optional defaults for every project in this folder.
+# A project file overrides anything set here. Model ids change; check fal.ai.
+
+models:
+  image: fal-ai/flux/dev
+  video: bytedance/seedance-2.0/image-to-video
+  voice: eleven_multilingual_v2

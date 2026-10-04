@@ -1,0 +1,4 @@
+# Optional. The default beat tracker is pure TypeScript and needs none of this.
+# Install only if you pass --analyzer python
+numpy
+librosa

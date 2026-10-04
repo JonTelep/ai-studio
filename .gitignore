@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+out/
+work/
+projects/*/work/
+projects/*/output.mp4
+projects/*/preview.mp4
+projects/*/contact-sheet.jpg
+.remotion/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

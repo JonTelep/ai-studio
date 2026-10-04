@@ -1,0 +1,31 @@
+title: Brought Media
+aspect: "16:9"
+fps: 30
+provider: placeholder
+assets: images
+models:
+  image: fal-ai/flux/dev
+  video: bytedance/seedance-2.0/image-to-video
+references:
+  style: style.png
+  character: character.png
+shots:
+  - id: photo
+    image: photo.jpg
+    duration: 2
+    camera: ken-burns-in
+    text: Your still
+  - id: animated
+    kind: video
+    image: photo.jpg
+    duration: 2
+    camera: slow-push
+    prompt: Slow push across the supplied photo, keeping the same subject
+    reference_images:
+      - character.png
+  - id: clip
+    video: clip.mp4
+    duration: 2
+    text: Your clip
+captions:
+  style: clean

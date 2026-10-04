@@ -1,0 +1,27 @@
+title: Photo Bridge
+aspect: "16:9"
+fps: 24
+provider: placeholder
+assets: images
+models:
+  image: fal-ai/flux/dev
+  video: bytedance/seedance-2.0/image-to-video
+  endImageField: end_image_url
+shots:
+  - id: photo-a
+    image: photo.jpg
+    duration: 1.5
+    camera: ken-burns-in
+    text: Photo A
+  - id: crossing
+    start_from: previous
+    end_image: photo-b.jpg
+    duration: 2
+    prompt: The camera travels from the first photo into the second, one continuous move
+  - id: photo-b
+    image: photo-b.jpg
+    duration: 1.5
+    camera: ken-burns-out
+    text: Photo B
+captions:
+  style: clean

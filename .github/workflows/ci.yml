@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Placeholder pipeline
+        env:
+          STUDIO_FORBID_PAID: '1'
+        run: |
+          make dry ocean
+          make dry meme-example
+          make dry own-media
+          make dry bridge
+          test -s projects/ocean/output.mp4
+          test -s projects/meme-example/output.mp4
+          test -s projects/own-media/output.mp4
+          test -s projects/bridge/output.mp4
